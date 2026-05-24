@@ -1,0 +1,39 @@
+{
+  "name": "ogfx-market-telegram",
+  "version": "0.1.0",
+  "description": "Analyze supported markets with the OGFX engine and send actionable signals to Telegram.",
+  "author": {
+    "name": "OGFX",
+    "url": "https://ogfx.app"
+  },
+  "homepage": "https://ogfx.app",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "trading",
+    "telegram",
+    "signals",
+    "market-analysis"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OGFX Market Signals",
+    "shortDescription": "Analyze markets and deliver Telegram signals.",
+    "longDescription": "A local Codex plugin that exposes OGFX market analysis tools and optional Telegram signal delivery for supported symbols.",
+    "developerName": "OGFX",
+    "category": "Finance",
+    "capabilities": [
+      "Interactive",
+      "External Data"
+    ],
+    "websiteURL": "https://ogfx.app",
+    "privacyPolicyURL": "https://ogfx.app/privacy",
+    "termsOfServiceURL": "https://ogfx.app/terms",
+    "defaultPrompt": [
+      "Analyze BTCUSD and summarize the setup.",
+      "Scan BTCUSD, ETHUSD, and XAUUSD for signals.",
+      "Send the latest actionable setup to Telegram."
+    ],
+    "brandColor": "#0E7C66"
+  }
+}

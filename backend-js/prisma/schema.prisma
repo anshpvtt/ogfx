@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  phone          String    @unique
+  telegramId     String?   @unique
+  telegramChatId String?   @unique
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  subscriptions  UserSubscription[]
+  telegramSub    TelegramSubscription?
+
+  @@map("users")
+}
+
+model Signal {
+  id          String   @id @default(uuid()) @db.Uuid
+  pair        String
+  type        String   // BUY or SELL
+  entry       Float
+  stopLoss    Float
+  takeProfit  Float
+  confidence  Int
+  reason      String
+  status      String   @default("ACTIVE") // ACTIVE, CLOSED, CANCELLED
+  pips        Float?
+  context     Json?    // Additional context data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  closedAt    DateTime?
+
+  @@index([pair, status])
+  @@index([createdAt])
+  @@map("signals")
+}
+
+model Trade {
+  id          String   @id @default(uuid()) @db.Uuid
+  signalId    String?   @db.Uuid
+  pair        String
+  type        String   // BUY or SELL
+  entry       Float
+  stopLoss    Float
+  takeProfit  Float
+  closePrice  Float?
+  pnl         Float?
+  pips        Float?
+  status      String   @default("OPEN") // OPEN, CLOSED
+  openedAt    DateTime @default(now())
+  closedAt    DateTime?
+
+  @@index([pair, status])
+  @@map("trades")
+}
+
+model UserSubscription {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  pair      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pair])
+  @@index([userId])
+  @@index([pair, isActive])
+  @@map("user_subscriptions")
+}
+
+model TelegramSubscription {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @unique @db.Uuid
+  chatId     String   @unique
+  username   String?
+  firstName  String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("telegram_subscriptions")
+}
+
+model StrategyConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  config      Json
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("strategy_configs")
+}

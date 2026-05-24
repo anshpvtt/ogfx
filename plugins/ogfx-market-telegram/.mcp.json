@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ogfx-market-telegram": {
+      "command": "node",
+      "args": [
+        "./server/index.mjs"
+      ]
+    }
+  }
+}

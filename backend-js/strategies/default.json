@@ -1,0 +1,35 @@
+{
+  "name": "OGFX Default Strategy",
+  "version": "1.0.0",
+  "description": "Rule-based strategy with breakout, RSI, and trend confirmation",
+  "timeframe": "15m",
+  "rules": {
+    "BUY": {
+      "breakout": { "enabled": true, "lookback": 20, "threshold": 0.95 },
+      "rsi": { "enabled": true, "period": 14, "oversold": 35, "overbought": 70 },
+      "trend": { "enabled": true, "fastEma": 20, "slowEma": 50 },
+      "priceAction": { "enabled": true, "minBars": 5, "pattern": "higherLows" }
+    },
+    "SELL": {
+      "breakout": { "enabled": true, "lookback": 20, "threshold": 0.95 },
+      "rsi": { "enabled": true, "period": 14, "oversold": 30, "overbought": 65 },
+      "trend": { "enabled": true, "fastEma": 20, "slowEma": 50 },
+      "priceAction": { "enabled": true, "minBars": 5, "pattern": "lowerHighs" }
+    }
+  },
+  "context": {
+    "minConfidence": 60,
+    "trendAlignment": { "enabled": true, "bonus": 20 },
+    "volatility": { "enabled": true, "maxAtrPercent": 2.0, "penalty": 15 },
+    "session": { "enabled": true, "favorableOnly": false, "bonus": 10 },
+    "volume": { "enabled": true, "minRatio": 1.2, "bonus": 10 },
+    "keyLevels": { "enabled": true, "proximityPercent": 0.5, "bonus": 5 }
+  },
+  "riskManagement": {
+    "slMultiplier": 2.0,
+    "tpMultiplier": 3.0,
+    "minRiskReward": 1.5,
+    "maxDailySignals": 10
+  }
+}
+

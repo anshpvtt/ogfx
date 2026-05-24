@@ -1,0 +1,167 @@
+[
+  {
+    "id": "trend_pullback",
+    "name": "Trend + Pullback",
+    "description": "Enter in the direction of the major trend after a pullback to a dynamic support/resistance level.",
+    "timeframes": ["1h", "4h", "1d"],
+    "instruments": ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSDT"],
+    "entry_conditions": {
+      "trend": "Price above 200 EMA for BUY; below 200 EMA for SELL",
+      "pullback": "Price retraces to 50 EMA zone (within 0.3% of 50 EMA)",
+      "momentum": "RSI between 40-60 after pullback (neutral zone reentry)",
+      "macd": "MACD histogram turning positive for BUY, negative for SELL",
+      "confirmation": "Close candle beyond the pullback high/low"
+    },
+    "exit_conditions": {
+      "take_profit": "Previous swing high (BUY) or swing low (SELL)",
+      "stop_loss": "Below pullback candle low (BUY) or above pullback candle high (SELL)",
+      "trailing": "Move SL to breakeven after 1:1 RR is reached"
+    },
+    "risk_reward": 2.0,
+    "win_rate_historical": 0.64,
+    "max_risk_per_trade": 0.02,
+    "filters": {
+      "avoid_news": true,
+      "session": ["london", "new_york"],
+      "min_atr_multiplier": 1.2
+    },
+    "scoring_weights": {
+      "trend_alignment": 0.30,
+      "pullback_quality": 0.25,
+      "rsi_position": 0.20,
+      "macd_confirmation": 0.25
+    }
+  },
+  {
+    "id": "breakout",
+    "name": "Breakout Strategy",
+    "description": "Trade the break of a key consolidation zone or structure high/low with volume confirmation.",
+    "timeframes": ["15m", "1h", "4h"],
+    "instruments": ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSDT"],
+    "entry_conditions": {
+      "consolidation": "Price range < 0.5% ATR for at least 10 candles",
+      "breakout": "Close above resistance (BUY) or below support (SELL) by at least 0.1%",
+      "volume": "Volume > 1.5x 20-period average volume on breakout candle",
+      "trend": "Breakout in direction of 200 EMA",
+      "rsi": "RSI > 55 for BUY breakout; RSI < 45 for SELL breakout"
+    },
+    "exit_conditions": {
+      "take_profit": "Consolidation range height projected from breakout level × 2",
+      "stop_loss": "Opposite end of consolidation zone",
+      "retest_entry": "If price retests breakout level and holds, adds to position"
+    },
+    "risk_reward": 2.5,
+    "win_rate_historical": 0.58,
+    "max_risk_per_trade": 0.015,
+    "filters": {
+      "avoid_news": true,
+      "session": ["london_open", "new_york_open"],
+      "min_atr_multiplier": 1.5
+    },
+    "scoring_weights": {
+      "consolidation_quality": 0.30,
+      "breakout_strength": 0.30,
+      "trend_alignment": 0.20,
+      "rsi_confirmation": 0.20
+    }
+  },
+  {
+    "id": "rsi_divergence",
+    "name": "RSI Divergence",
+    "description": "Trade when price makes a new high/low but RSI fails to confirm, signaling trend exhaustion.",
+    "timeframes": ["1h", "4h"],
+    "instruments": ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSDT"],
+    "entry_conditions": {
+      "price_action": "Price makes higher high (bearish div) or lower low (bullish div)",
+      "rsi_divergence": "RSI makes lower high during price HH (bearish) or higher low during price LL (bullish)",
+      "rsi_levels": "RSI > 65 for bearish divergence; RSI < 35 for bullish divergence",
+      "confirmation": "Reversal candle (engulfing, doji, hammer) at divergence point",
+      "macd": "MACD crossing signal line in direction of trade"
+    },
+    "exit_conditions": {
+      "take_profit": "Previous swing high/low (opposing side)",
+      "stop_loss": "Beyond the divergence high/low",
+      "time_exit": "Exit if price does not move after 8 candles"
+    },
+    "risk_reward": 2.0,
+    "win_rate_historical": 0.61,
+    "max_risk_per_trade": 0.015,
+    "filters": {
+      "avoid_news": true,
+      "session": ["london", "new_york"],
+      "min_swing_length": 5
+    },
+    "scoring_weights": {
+      "divergence_clarity": 0.35,
+      "rsi_extreme": 0.25,
+      "reversal_candle": 0.25,
+      "macd_confirmation": 0.15
+    }
+  },
+  {
+    "id": "support_resistance_bounce",
+    "name": "Support/Resistance Bounce",
+    "description": "Trade the reaction from a historically significant support or resistance zone.",
+    "timeframes": ["1h", "4h", "1d"],
+    "instruments": ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSDT"],
+    "entry_conditions": {
+      "zone_identification": "Key level tested at least 2 times previously",
+      "approach": "Price approaching zone with momentum (MACD expanding)",
+      "reaction": "Rejection candle (wick ≥ 2× body) at the zone",
+      "rsi": "RSI < 35 at support (BUY) or RSI > 65 at resistance (SELL)",
+      "ema_confluence": "Zone near 50 EMA or 200 EMA adds extra weight"
+    },
+    "exit_conditions": {
+      "take_profit": "Next major S/R zone in direction of trade",
+      "stop_loss": "Zone invalidation point (below support or above resistance by 0.2%)",
+      "partial_exit": "Take 50% at 1:1 RR, let rest run"
+    },
+    "risk_reward": 2.5,
+    "win_rate_historical": 0.66,
+    "max_risk_per_trade": 0.02,
+    "filters": {
+      "avoid_news": true,
+      "session": ["london", "new_york", "asia"],
+      "min_zone_touches": 2
+    },
+    "scoring_weights": {
+      "zone_strength": 0.35,
+      "rejection_quality": 0.30,
+      "rsi_extreme": 0.20,
+      "ema_confluence": 0.15
+    }
+  },
+  {
+    "id": "liquidity_sweep",
+    "name": "Liquidity Sweep",
+    "description": "Trade the reversal after a false break that sweeps stop-loss clusters above highs or below lows.",
+    "timeframes": ["15m", "1h", "4h"],
+    "instruments": ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSDT"],
+    "entry_conditions": {
+      "sweep": "Price spikes beyond a significant swing high/low by 0.05-0.3%, then closes back inside",
+      "internal_liquidity": "RSI shows reversal: spike spike high RSI > 70 for SELL sweep, < 30 for BUY sweep",
+      "bos": "Break of Structure in the opposite direction after sweep",
+      "volume": "High volume spike on the sweep candle",
+      "confirmation": "Strong reversal candle closing beyond BOS level"
+    },
+    "exit_conditions": {
+      "take_profit": "Opposing liquidity pool (next swing high/low on opposite side)",
+      "stop_loss": "Beyond the sweep wick",
+      "quick_exit": "Exit if price re-sweeps the same level"
+    },
+    "risk_reward": 3.0,
+    "win_rate_historical": 0.59,
+    "max_risk_per_trade": 0.015,
+    "filters": {
+      "avoid_news": true,
+      "session": ["london_open", "new_york_open"],
+      "require_high_volume": true
+    },
+    "scoring_weights": {
+      "sweep_quality": 0.40,
+      "reversal_speed": 0.25,
+      "bos_clarity": 0.20,
+      "volume_confirmation": 0.15
+    }
+  }
+]

@@ -1,0 +1,240 @@
+{
+  "name": "OGFX SMC Strategy - Smart Money Concepts",
+  "version": "2.0.0",
+  "description": "Institutional-grade trading strategy based on Smart Money Concepts with Liquidity Sweep detection, Market Structure analysis, and Supply/Demand Zones",
+  "type": "SMC",
+  "timeframe": "15m",
+  "htfTimeframe": "1h",
+
+  "philosophy": {
+    "core": "Trade the reaction after liquidity sweep, not the breakout",
+    "principle": "Market moves because of liquidity (not indicators). Liquidity = stop losses above highs / below lows",
+    "institutions": "Institutions collect liquidity, then move price in their intended direction"
+  },
+
+  "marketStructure": {
+    "bullish": {
+      "description": "Higher High (HH) + Higher Low (HL)",
+      "bias": "Bullish trend continuation",
+      "tradeDirection": "BUY"
+    },
+    "bearish": {
+      "description": "Lower High (LH) + Lower Low (LL)",
+      "bias": "Bearish trend continuation", 
+      "tradeDirection": "SELL"
+    },
+    "ranging": {
+      "description": "Equal highs + Equal lows",
+      "bias": "Consolidation",
+      "tradeDirection": "Wait for breakout"
+    }
+  },
+
+  "liquidity": {
+    "buySide": {
+      "description": "Equal highs, Previous highs (where stop losses are)",
+      "touchesRequired": 2,
+      "tolerance": 0.0005
+    },
+    "sellSide": {
+      "description": "Equal lows, Previous lows (where stop losses are)",
+      "touchesRequired": 2,
+      "tolerance": 0.0005
+    }
+  },
+
+  "sweepDetection": {
+    "validSweep": {
+      "buySetup": [
+        "Price goes below equal lows",
+        "Creates wick (30%+ of candle)",
+        "Closes back above the level"
+      ],
+      "sellSetup": [
+        "Price goes above equal highs",
+        "Creates wick (30%+ of candle)",
+        "Closes back below the level"
+      ]
+    },
+    "parameters": {
+      "wickThreshold": 0.3,
+      "closeThreshold": 0.001,
+      "minSweepDistance": 0.0005
+    }
+  },
+
+  "confirmation": {
+    "patterns": [
+      {
+        "name": "Engulfing",
+        "bullish": "Current candle completely engulfs previous bearish candle",
+        "bearish": "Current candle completely engulfs previous bullish candle",
+        "weight": 20
+      },
+      {
+        "name": "Break of Structure (BOS)",
+        "bullish": "Price breaks above previous high",
+        "bearish": "Price breaks below previous low",
+        "weight": 20
+      },
+      {
+        "name": "Market Structure Shift (MSS/CHoCH)",
+        "bullish": "Lower low followed by break of previous high",
+        "bearish": "Higher high followed by break of previous low",
+        "weight": 25
+      },
+      {
+        "name": "Displacement",
+        "description": "Large momentum candle (0.3%+ move)",
+        "weight": 15
+      },
+      {
+        "name": "Pin Bar",
+        "description": "Long wick with small body showing rejection",
+        "weight": 20
+      }
+    ],
+    "requireConfirmation": true,
+    "minConfidence": 60
+  },
+
+  "htfAlignment": {
+    "enabled": true,
+    "rule": "If HTF bullish → only BUY. If HTF bearish → only SELL",
+    "timeframe": "1h",
+    "minScore": 60,
+    "weight": 30
+  },
+
+  "supplyDemandZones": {
+    "demand": {
+      "pattern": "Rally → Base → Rally",
+      "entryType": "Sniper (in zone) or Refined (near zone)",
+      "qualityFactors": ["Strong departure", "Small base", "Fresh untested zone"]
+    },
+    "supply": {
+      "pattern": "Drop → Base → Drop",
+      "entryType": "Sniper (in zone) or Refined (near zone)",
+      "qualityFactors": ["Strong departure", "Small base", "Fresh untested zone"]
+    },
+    "parameters": {
+      "minDepartureStrength": 2.0,
+      "maxBaseSize": 5,
+      "minZoneWidth": 0.0005,
+      "freshness": 20
+    }
+  },
+
+  "contextFilters": {
+    "session": {
+      "enabled": true,
+      "preferred": ["London", "NewYork", "LondonNY"],
+      "avoid": ["Asian (low volatility)"],
+      "weight": 15
+    },
+    "volatility": {
+      "minATRPercent": 0.1,
+      "maxATRPercent": 2.0,
+      "weight": 10
+    },
+    "spread": {
+      "maxPercent": 0.05,
+      "weight": 5
+    },
+    "cooldown": {
+      "minutes": 30,
+      "weight": 10
+    }
+  },
+
+  "entryModels": {
+    "sniper": {
+      "description": "Enter directly when price is in zone",
+      "risk": "High RR, but risky if zone fails",
+      "bestFor": "High confidence setups with sweep confirmation"
+    },
+    "confirmation": {
+      "description": "Wait for confirmation after sweep",
+      "risk": "Safer entry after validation",
+      "bestFor": "Standard SMC setups"
+    },
+    "refined": {
+      "description": "Lower timeframe zone inside HTF zone",
+      "risk": "Best RR with confluence",
+      "bestFor": "Multiple timeframe alignment"
+    }
+  },
+
+  "riskManagement": {
+    "stopLoss": {
+      "placement": "At sweep extreme (wick low/high)",
+      "buffer": 0.0005
+    },
+    "takeProfit": {
+      "placement": "Next liquidity pool",
+      "fallback": "2:1 minimum RR"
+    },
+    "positionSizing": {
+      "riskPerTrade": "1-2% of account",
+      "maxDailyRisk": "5% of account"
+    },
+    "breakeven": {
+      "trigger": "1:1 RR reached",
+      "action": "Move SL to entry"
+    }
+  },
+
+  "confidenceSystem": {
+    "weights": {
+      "sweepQuality": 30,
+      "confirmation": 20,
+      "htfAlignment": 20,
+      "zoneQuality": 15,
+      "contextFilter": 10,
+      "structureAlignment": 5
+    },
+    "thresholds": {
+      "highQuality": 80,
+      "tradeable": 70,
+      "reject": 60
+    }
+  },
+
+  "rules": {
+    "absolute": [
+      "NEVER trade without sweep",
+      "NEVER trade without confirmation",
+      "ALWAYS follow HTF bias",
+      "DO NOT trade in low volatility (Asian session)",
+      "DO NOT trade against HTF structure",
+      "ALWAYS use stop loss",
+      "NEVER risk more than 2% per trade"
+    ],
+    "guidelines": [
+      "Prefer setups during London/NY session",
+      "Target 2:1 RR minimum",
+      "Use position sizing based on confidence",
+      "Take partial profits at 1:1",
+      "Move to breakeven after 1:1"
+    ]
+  },
+
+  "telegramFormat": {
+    "template": "🚀 OGFX SMC SIGNAL\n\nPAIR: {{pair}}\nTYPE: {{type}}\nENTRY: {{entry}}\nSL: {{stopLoss}}\nTP: {{takeProfit}}\n\nCONFIDENCE: {{confidence}}%\nR:R: {{riskReward}}:1\n\nREASON:\n{{reason}}\n\nHTF: {{htfBias}} ({{htfScore}}%)\nSTRUCTURE: {{structure}}\nZONE: {{zoneType}} (Q:{{zoneQuality}})",
+    "emoji": {
+      "buy": "🟢",
+      "sell": "🔴",
+      "highConfidence": "💎",
+      "mediumConfidence": "⚡",
+      "lowConfidence": "⚠️"
+    }
+  },
+
+  "performance": {
+    "targetWinRate": 70,
+    "minRR": 1.5,
+    "targetRR": 2.0,
+    "maxDailySignals": 5,
+    "reviewPeriod": "Weekly"
+  }
+}
