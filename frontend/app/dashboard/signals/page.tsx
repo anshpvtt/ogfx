@@ -6,7 +6,6 @@ import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { backendJson } from "@/lib/backend-api";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type SignalRow = {
@@ -24,7 +23,7 @@ type SignalRow = {
   takeProfit?: number | null;
   risk_reward?: number | null;
   rrRatio?: number | null;
-  confidence: number | null;
+  confidence: number | string | null;
   confirmation_type?: string | null;
   reason?: string | null;
   created_at?: string;
@@ -33,6 +32,22 @@ type SignalRow = {
 
 function fmt(value: number | null | undefined) {
   return value == null ? "-" : Number(value).toFixed(value > 20 ? 2 : 5);
+}
+
+function confidenceNumber(value: SignalRow["confidence"]) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    if (value.toUpperCase() === "HIGH") return 85;
+    if (value.toUpperCase() === "MEDIUM") return 62;
+    if (value.toUpperCase() === "LOW") return 38;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function confidenceLabel(value: SignalRow["confidence"]) {
+  return typeof value === "string" && Number.isNaN(Number(value)) ? value : `${confidenceNumber(value)}%`;
 }
 
 export default function DashboardSignalsPage() {
@@ -56,8 +71,14 @@ export default function DashboardSignalsPage() {
       }
 
       try {
-        const payload = await backendJson<{ signals: SignalRow[] }>(`/api/signals/${nextUserId}?limit=20`);
-        setSignals(payload.signals ?? []);
+        const { data, error } = await supabase
+          .from("signals")
+          .select("*")
+          .eq("user_id", nextUserId)
+          .order("created_at", { ascending: false })
+          .limit(20);
+        if (error) throw new Error(error.message);
+        setSignals(data ?? []);
         setMessage("");
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Failed to load signals");
@@ -80,12 +101,23 @@ export default function DashboardSignalsPage() {
     setForceLoading(true);
     setMessage("");
     try {
-      await backendJson("/api/signal/generate", {
+      const response = await fetch("/api/signals/generate", {
         method: "POST",
-        body: JSON.stringify({ userId, symbol: "XAUUSD", timeframe: "1h" }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair: "XAUUSD", timeframe: "1H" }),
       });
-      const payload = await backendJson<{ signals: SignalRow[] }>(`/api/signals/${userId}?limit=20`);
-      setSignals(payload.signals ?? []);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Force scan failed");
+
+      const supabase = createSupabaseBrowserClient();
+      const { data, error } = await supabase
+        .from("signals")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw new Error(error.message);
+      setSignals(data ?? []);
       setMessage("Force scan complete.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Force scan failed");
@@ -137,12 +169,12 @@ export default function DashboardSignalsPage() {
                       {signal.direction ?? signal.signal}
                     </Badge>
                     <Badge variant="outline" className="border-blue-500/30 text-blue-200">
-                      {signal.confidence ?? 0}%
+                      {confidenceLabel(signal.confidence)}
                     </Badge>
                   </div>
                 </div>
                 <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.max(0, Math.min(100, Number(signal.confidence ?? 0)))}%` }} />
+                  <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.max(0, Math.min(100, confidenceNumber(signal.confidence)))}%` }} />
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                   <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><span className="text-slate-500">Entry</span><div className="font-mono text-white">{fmt(signal.entry)}</div></div>

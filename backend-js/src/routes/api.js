@@ -89,6 +89,49 @@ function orderPnl(order, closePrice) {
   return Number(((Number(closePrice) - entry) * direction * lotSizeOf(order)).toFixed(2));
 }
 
+function fallbackAccount(userId, balance = 10000) {
+  return {
+    id: `demo-${userId || "guest"}`,
+    user_id: userId || null,
+    currency: "USD",
+    initial_balance: balance,
+    balance,
+    equity: balance,
+    free_margin: balance,
+    margin: 0,
+    margin_level: null,
+    realized_pnl: 0,
+    updated_at: new Date().toISOString(),
+    nonPersistent: true,
+  };
+}
+
+function fallbackDemoOrder(body) {
+  const symbol = String(body.symbol || body.assetId || "XAUUSD").toUpperCase();
+  const direction = String(body.direction || body.side || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+  const entry = numeric(body.entry, numeric(body.entry_price, 0));
+  const lotSize = numeric(body.lotSize, numeric(body.size, 1));
+  const sl = numeric(body.sl, numeric(body.stopLoss, numeric(body.stop_loss, null)));
+  const tp = numeric(body.tp, numeric(body.takeProfit, numeric(body.take_profit, null)));
+
+  return normalizeOrder({
+    id: `demo-${Date.now()}`,
+    user_id: body.userId || body.user_id || null,
+    symbol,
+    direction,
+    lot_size: lotSize,
+    entry_price: entry,
+    stop_loss: sl,
+    take_profit: tp,
+    status: "open",
+    pnl: 0,
+    opened_at: new Date().toISOString(),
+    source: body.source || "manual",
+    confidence: numeric(body.confidence, null),
+    reason: body.reason ? String(body.reason) : null,
+  });
+}
+
 function parseGemmaJson(text) {
   const cleaned = String(text || "{}")
     .replace(/^```json\s*/i, "")
@@ -536,6 +579,7 @@ export async function apiRoutes(fastify) {
 
   fastify.get("/api/signals/:userId", async (request, reply) => {
     try {
+      if (!hasSupabaseEnv()) return { success: true, signals: [], nonPersistent: true };
       const { userId } = request.params;
       const limit = Math.min(100, Math.max(1, Number(request.query?.limit || 50)));
       const supabase = getSupabaseAdmin();
@@ -574,29 +618,33 @@ export async function apiRoutes(fastify) {
       }
 
       const result = runSMCBacktest(candles, { symbol: String(symbol).toUpperCase(), initialBalance: 10000 });
-      const supabase = getSupabaseAdmin();
-      const { data, error } = await supabase
-        .from("backtest_runs")
-        .insert({
-          user_id: userId || null,
-          symbol: String(symbol).toUpperCase(),
-          timeframe: normalizeTimeframe(timeframe),
-          start_date: startDate,
-          end_date: endDate,
-          total_trades: result.totalTrades,
-          win_rate: result.winRate,
-          total_pnl: result.totalPnl,
-          max_drawdown: result.maxDrawdown,
-          result_json: result,
-          status: "completed",
-        })
-        .select("*")
-        .single();
-      if (error) throw new Error(error.message);
+      let data = null;
+      if (hasSupabaseEnv()) {
+        const supabase = getSupabaseAdmin();
+        const insert = await supabase
+          .from("backtest_runs")
+          .insert({
+            user_id: userId || null,
+            symbol: String(symbol).toUpperCase(),
+            timeframe: normalizeTimeframe(timeframe),
+            start_date: startDate,
+            end_date: endDate,
+            total_trades: result.totalTrades,
+            win_rate: result.winRate,
+            total_pnl: result.totalPnl,
+            max_drawdown: result.maxDrawdown,
+            result_json: result,
+            status: "completed",
+          })
+          .select("*")
+          .single();
+        if (insert.error) throw new Error(insert.error.message);
+        data = insert.data;
+      }
 
       return reply.header("Content-Type", "application/json").send({
         success: true,
-        backtestRun: data,
+        backtestRun: data || { id: `local-${Date.now()}`, status: "completed", nonPersistent: true },
         result,
       });
     } catch (error) {
@@ -607,6 +655,7 @@ export async function apiRoutes(fastify) {
 
   fastify.get("/api/demo/account/:userId", async (request, reply) => {
     try {
+      if (!hasSupabaseEnv()) return { success: true, account: fallbackAccount(request.params.userId) };
       const supabase = getSupabaseAdmin();
       const account = await recalculateAccount(supabase, request.params.userId);
       return { success: true, account };
@@ -619,6 +668,7 @@ export async function apiRoutes(fastify) {
     try {
       const userId = request.body?.userId || request.body?.user_id;
       if (!userId) return reply.status(400).send({ success: false, error: "userId is required" });
+      if (!hasSupabaseEnv()) return { success: true, account: fallbackAccount(String(userId), numeric(request.body?.initialBalance, 10000)) };
       const account = await ensureAccount(getSupabaseAdmin(), String(userId));
       return { success: true, account };
     } catch (error) {
@@ -628,6 +678,7 @@ export async function apiRoutes(fastify) {
 
   fastify.get("/api/demo/orders/:userId", async (request, reply) => {
     try {
+      if (!hasSupabaseEnv()) return { success: true, orders: [], nonPersistent: true };
       const supabase = getSupabaseAdmin();
       const { data, error } = await supabase
         .from("demo_orders")
@@ -643,6 +694,10 @@ export async function apiRoutes(fastify) {
 
   fastify.post("/api/demo/place-order", async (request, reply) => {
     try {
+      if (!hasSupabaseEnv()) {
+        const order = fallbackDemoOrder(request.body || {});
+        return { success: true, order, account: fallbackAccount(order.userId || request.body?.userId || request.body?.user_id) };
+      }
       const { order, account } = await placeDemoOrder(getSupabaseAdmin(), request.body || {});
       return { success: true, order, account };
     } catch (error) {
@@ -656,6 +711,7 @@ export async function apiRoutes(fastify) {
       if (!orderId || !userId || !Number.isFinite(Number(closePrice))) {
         return reply.status(400).send({ success: false, error: "orderId, userId and closePrice are required" });
       }
+      if (!hasSupabaseEnv()) return { success: true, order: { id: orderId, status: "closed", closePrice: Number(closePrice), nonPersistent: true }, account: fallbackAccount(userId) };
 
       const supabase = getSupabaseAdmin();
       const { data: order, error } = await supabase

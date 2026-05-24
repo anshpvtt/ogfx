@@ -343,12 +343,12 @@ export default function DashboardChartsPage() {
     if (!userId) return;
     setSyncingAccount(true);
     try {
-      const [accountPayload, ordersPayload] = await Promise.all([
-        backendJson<{ account: DemoAccount }>(`/api/demo/account/${userId}`),
-        backendJson<{ orders: BackendOrder[] }>(`/api/demo/orders/${userId}`),
-      ]);
+      const accountResponse = await fetch("/api/demo/account", { cache: "no-store" });
+      const accountPayload = await accountResponse.json().catch(() => ({}));
+      if (!accountResponse.ok) throw new Error(accountPayload.error || "Failed to load demo account");
+
       setAccount(accountPayload.account);
-      setOrders((ordersPayload.orders ?? []).map(toDemoOrder));
+      setOrders((accountPayload.orders ?? []).map(toDemoOrder));
       setCapitalInput(String(Number(accountPayload.account?.initial_balance ?? accountPayload.account?.balance ?? 10000)));
       const settingsResponse = await fetch("/api/demo/settings", { cache: "no-store" });
       const settingsPayload = await settingsResponse.json().catch(() => ({}));
@@ -539,21 +539,23 @@ export default function DashboardChartsPage() {
       return;
     }
     try {
-      const payload = await backendJson<{ order: BackendOrder; account: DemoAccount }>("/api/demo/place-order", {
+      const response = await fetch("/api/demo/orders", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId,
-          symbol: activeAsset.id,
-          direction: ticket.side,
-          lotSize: Number(ticket.size),
+          assetId: activeAsset.id,
+          side: ticket.side,
+          size: Number(ticket.size),
           entry: Number(ticket.entry),
-          sl: Number(ticket.stopLoss),
-          tp: Number(ticket.takeProfit),
+          stopLoss: Number(ticket.stopLoss),
+          takeProfit: Number(ticket.takeProfit),
           source: agentDecision?.decision === ticket.side ? "agent" : "manual",
           confidence: agentDecision?.decision === ticket.side ? agentDecision.confidence : null,
           reason: agentDecision?.decision === ticket.side ? agentDecision.summary : null,
         }),
       });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Failed to place demo order");
 
       setOrders((current) => [toDemoOrder(payload.order), ...current]);
       setAccount(payload.account);
@@ -570,14 +572,13 @@ export default function DashboardChartsPage() {
       return;
     }
     try {
-      await backendJson("/api/demo/close-order", {
+      const response = await fetch(`/api/demo/orders/${orderId}/close`, {
         method: "POST",
-        body: JSON.stringify({
-          orderId,
-          userId,
-          closePrice: activeSnapshot?.latest?.close ?? bidAsk.bid,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exitPrice: activeSnapshot?.latest?.close ?? bidAsk.bid }),
       });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Failed to close order");
       await loadDemoAccount();
       setNotice("Order closed and capital synced.");
     } catch (error) {
