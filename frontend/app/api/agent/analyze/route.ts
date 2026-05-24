@@ -15,11 +15,13 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "openrouter" | "local-demo";
+  mode: "gemma" | "openrouter" | "ollama" | "local-demo";
 };
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
+const BACKEND_API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://ogfx-render-agent-free.onrender.com").replace(/\/$/, "");
 
 async function readJson(relativePath: string, fallback: any = {}) {
   const root = path.basename(process.cwd()) === "frontend" ? path.resolve(process.cwd(), "..") : process.cwd();
@@ -73,13 +75,28 @@ function getOpenRouterModel() {
   return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
 }
 
+function getOllamaApiKey() {
+  return process.env.OLLAMA_API_KEY || "";
+}
+
+function getOllamaModel(needsVision = false) {
+  if (needsVision) return process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:235b-instruct";
+  return process.env.OLLAMA_MODEL || "gemma4:31b";
+}
+
 function friendlyAiError(error: any) {
   const message = String(error?.message || error || "AI provider unavailable");
   if (/free-models-per-day/i.test(message)) {
     return "OpenRouter free model daily limit reached for this account. OGFX local SMC fallback is active until quota resets or credits are added.";
   }
+  if (/subscription|upgrade/i.test(message)) {
+    return "Selected AI model requires a paid subscription. OGFX is using the next free provider or local SMC fallback.";
+  }
+  if (/unauthorized|401|403/i.test(message)) {
+    return "AI provider rejected the API key. Check the server-side key value; OGFX local SMC fallback is active.";
+  }
   if (/429|rate.?limit|temporarily/i.test(message)) {
-    return "OpenRouter Gemma 4 31B is temporarily rate-limited upstream. OGFX local SMC fallback is active.";
+    return "AI provider is temporarily rate-limited. OGFX local SMC fallback is active.";
   }
   return message.length > 220 ? `${message.slice(0, 217)}...` : message;
 }
@@ -120,17 +137,20 @@ async function resolveGemmaModel(apiKey: string, needsVision = false) {
 function coerceDecision(value: any, model: string, mode: AgentDecision["mode"]): AgentDecision {
   const decision = value?.decision === "BUY" || value?.decision === "SELL" || value?.decision === "WAIT" ? value.decision : "WAIT";
   const confidence = Math.max(0, Math.min(100, Number(value?.confidence ?? 50)));
+  const stopLoss = value?.stopLoss ?? value?.sl;
+  const takeProfit = value?.takeProfit ?? value?.tp;
+  const summary = value?.summary ?? value?.reason;
 
   return {
     decision,
     confidence,
     entry: Number.isFinite(Number(value?.entry)) ? Number(value.entry) : null,
-    stopLoss: Number.isFinite(Number(value?.stopLoss)) ? Number(value.stopLoss) : null,
-    takeProfit: Number.isFinite(Number(value?.takeProfit)) ? Number(value.takeProfit) : null,
-    riskReward: Number.isFinite(Number(value?.riskReward)) ? Number(value.riskReward) : null,
+    stopLoss: Number.isFinite(Number(stopLoss)) ? Number(stopLoss) : null,
+    takeProfit: Number.isFinite(Number(takeProfit)) ? Number(takeProfit) : null,
+    riskReward: Number.isFinite(Number(value?.riskReward ?? value?.rr)) ? Number(value?.riskReward ?? value?.rr) : null,
     bias: String(value?.bias || "NEUTRAL"),
-    summary: String(value?.summary || "No high-confidence setup. Wait for cleaner confirmation."),
-    reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 5).map(String) : ["Insufficient confluence"],
+    summary: String(summary || "No high-confidence setup. Wait for cleaner confirmation."),
+    reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 5).map(String) : [String(value?.reason || "Insufficient confluence")],
     invalidation: String(value?.invalidation || "Setup invalidates if price closes beyond the protected liquidity extreme."),
     model,
     mode,
@@ -279,6 +299,61 @@ function toOpenRouterImageParts(body: any) {
   });
 }
 
+function toOllamaImages(body: any) {
+  const sources = Array.isArray(body?.images) ? body.images : [body?.imageDataUrl || body?.imageBase64].filter(Boolean);
+  return sources.flatMap((source: any) => {
+    if (!source) return [];
+    if (typeof source === "object" && source.data) {
+      return [String(source.data).replace(/^data:[^;]+;base64,/, "")];
+    }
+
+    return [String(source).replace(/^data:[^;]+;base64,/, "")];
+  });
+}
+
+async function callOllama({
+  apiKey,
+  model,
+  prompt,
+  images = [],
+}: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  images?: string[];
+}) {
+  const response = await fetch(OLLAMA_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{
+        role: "user",
+        content: prompt,
+        ...(images.length ? { images } : {}),
+      }],
+      stream: false,
+      format: "json",
+      options: {
+        temperature: 0.1,
+        num_predict: 800,
+      },
+    }),
+  });
+
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
+  }
+
+  const payload = JSON.parse(raw || "{}");
+  const text = payload?.message?.content ?? payload?.response ?? "{}";
+  return parseGemmaJson(text);
+}
+
 async function callOpenRouter({
   apiKey,
   model,
@@ -323,6 +398,22 @@ async function callOpenRouter({
   return parseGemmaJson(text);
 }
 
+async function callBackendAgent(body: any) {
+  const response = await fetch(`${BACKEND_API_URL}/agent/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`Backend agent returned ${response.status}: ${raw.slice(0, 220)}`);
+  }
+
+  const payload = JSON.parse(raw || "{}");
+  if (!payload?.decision) throw new Error("Backend agent returned no decision");
+  return payload.decision;
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const assetId = String(body?.assetId ?? "").toUpperCase();
@@ -333,11 +424,15 @@ export async function POST(request: NextRequest) {
   }
 
   const datasets = await loadDatasets();
+  const ollamaApiKey = getOllamaApiKey();
   const openRouterApiKey = getOpenRouterApiKey();
   const geminiApiKey = getGeminiApiKey();
   const imageParts = toImageParts(body);
+  const ollamaImages = toOllamaImages(body);
   const openRouterImageParts = toOpenRouterImageParts(body);
-  const model = openRouterApiKey
+  const model = ollamaApiKey
+    ? getOllamaModel(ollamaImages.length > 0)
+    : openRouterApiKey
     ? getOpenRouterModel()
     : geminiApiKey
       ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
@@ -358,10 +453,22 @@ export async function POST(request: NextRequest) {
     `Datasets: ${JSON.stringify(datasets).slice(0, 9000)}`,
   ].join("\n\n");
 
-  if (!openRouterApiKey && !geminiApiKey) {
+  if (!ollamaApiKey && !openRouterApiKey && !geminiApiKey) {
+    try {
+      const backendDecision = await callBackendAgent(body);
+      return NextResponse.json({ decision: backendDecision });
+    } catch (error) {
+      if (!requireGemma) {
+        return NextResponse.json({
+          decision: localDecision(body, model),
+          warning: friendlyAiError(error),
+        });
+      }
+    }
+
     if (requireGemma) {
       return NextResponse.json(
-        { error: "OPENROUTER_API_KEY or GEMINI_API_KEY is required for production signal generation" },
+        { error: "OLLAMA_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY is required for production signal generation" },
         { status: 503 }
       );
     }
@@ -372,7 +479,14 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const errors: string[] = [];
   try {
+    if (ollamaApiKey) {
+      const ollamaModel = getOllamaModel(ollamaImages.length > 0);
+      const rawDecision = await callOllama({ apiKey: ollamaApiKey, model: ollamaModel, prompt, images: ollamaImages });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, ollamaModel, "ollama") });
+    }
+
     if (openRouterApiKey) {
       const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model, prompt, imageParts: openRouterImageParts });
       return NextResponse.json({ decision: coerceDecision(rawDecision, model, "openrouter") });
@@ -381,7 +495,34 @@ export async function POST(request: NextRequest) {
     const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
     return NextResponse.json({ decision: coerceDecision(rawDecision, model, "gemma") });
   } catch (error: any) {
-    const message = friendlyAiError(error);
+    errors.push(friendlyAiError(error));
+  }
+
+  try {
+    if (openRouterApiKey && ollamaApiKey) {
+      const openRouterModel = getOpenRouterModel();
+      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model: openRouterModel, prompt, imageParts: openRouterImageParts });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, openRouterModel, "openrouter") });
+    }
+
+    if (geminiApiKey && (ollamaApiKey || openRouterApiKey)) {
+      const geminiModel = await resolveGemmaModel(geminiApiKey, imageParts.length > 0);
+      const rawDecision = await callGemma({ apiKey: geminiApiKey, model: geminiModel, prompt, imageParts });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, geminiModel, "gemma") });
+    }
+  } catch (error: any) {
+    errors.push(friendlyAiError(error));
+  }
+
+  try {
+    const backendDecision = await callBackendAgent(body);
+    return NextResponse.json({ decision: backendDecision, warning: errors.filter(Boolean).join(" | ") || undefined });
+  } catch (error: any) {
+    errors.push(friendlyAiError(error));
+  }
+
+  {
+    const message = errors.filter(Boolean).join(" | ") || "AI provider unavailable";
     const providerRateLimited = /429|rate.?limit|temporarily/i.test(message);
     if (requireGemma && !providerRateLimited) {
       return NextResponse.json(

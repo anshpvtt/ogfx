@@ -68,7 +68,7 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "openrouter" | "local-demo";
+  mode: "gemma" | "openrouter" | "ollama" | "local-demo";
 };
 
 type DemoAccount = {
@@ -225,7 +225,7 @@ function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
     reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : [],
     invalidation: String(decision.invalidation ?? "Invalid if price closes beyond the protected structure."),
     model: String(decision.model ?? "google/gemma-4-31b-it:free"),
-    mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : "openrouter",
+    mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : decision.mode === "ollama" ? "ollama" : "openrouter",
   };
 }
 

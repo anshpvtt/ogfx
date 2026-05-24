@@ -22,6 +22,12 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: OLLAMA_MODEL
+        value: gemma4:31b
+      - key: OLLAMA_VISION_MODEL
+        value: qwen3-vl:235b-instruct
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_GENERATIVE_AI_API_KEY

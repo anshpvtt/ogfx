@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -44,6 +45,15 @@ function openRouterApiKey() {
 
 function openRouterModel() {
   return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
+}
+
+function ollamaApiKey() {
+  return process.env.OLLAMA_API_KEY || "";
+}
+
+function ollamaModel(needsVision = false) {
+  if (needsVision) return process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:235b-instruct";
+  return process.env.OLLAMA_MODEL || "gemma4:31b";
 }
 
 function stripModelName(model) {
@@ -105,6 +115,21 @@ function toOpenRouterImageParts(body = {}) {
   });
 }
 
+function toOllamaImages(body = {}) {
+  const sources = Array.isArray(body.images)
+    ? body.images
+    : [body.imageDataUrl || body.imageBase64].filter(Boolean);
+
+  return sources.flatMap((source) => {
+    if (!source) return [];
+    if (typeof source === "object" && source.data) {
+      return [String(source.data).replace(/^data:[^;]+;base64,/, "")];
+    }
+
+    return [String(source).replace(/^data:[^;]+;base64,/, "")];
+  });
+}
+
 function parseJson(text) {
   const cleaned = String(text || "{}")
     .replace(/^```json\s*/i, "")
@@ -130,17 +155,20 @@ function coerceDecision(value, model, mode = "gemini") {
   const decision = value?.decision === "BUY" || value?.decision === "SELL" || value?.decision === "WAIT"
     ? value.decision
     : "WAIT";
+  const stopLoss = value?.stopLoss ?? value?.sl;
+  const takeProfit = value?.takeProfit ?? value?.tp;
+  const summary = value?.summary ?? value?.reason;
 
   return {
     decision,
     confidence: Math.max(0, Math.min(100, Number(value?.confidence ?? 50))),
     entry: Number.isFinite(Number(value?.entry)) ? Number(value.entry) : null,
-    stopLoss: Number.isFinite(Number(value?.stopLoss)) ? Number(value.stopLoss) : null,
-    takeProfit: Number.isFinite(Number(value?.takeProfit)) ? Number(value.takeProfit) : null,
-    riskReward: Number.isFinite(Number(value?.riskReward)) ? Number(value.riskReward) : null,
+    stopLoss: Number.isFinite(Number(stopLoss)) ? Number(stopLoss) : null,
+    takeProfit: Number.isFinite(Number(takeProfit)) ? Number(takeProfit) : null,
+    riskReward: Number.isFinite(Number(value?.riskReward ?? value?.rr)) ? Number(value?.riskReward ?? value?.rr) : null,
     bias: String(value?.bias || "NEUTRAL"),
-    summary: String(value?.summary || "No high-confidence setup. Wait for cleaner confirmation."),
-    reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 6).map(String) : ["Insufficient confluence"],
+    summary: String(summary || "No high-confidence setup. Wait for cleaner confirmation."),
+    reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 6).map(String) : [String(value?.reason || "Insufficient confluence")],
     invalidation: String(value?.invalidation || "Invalid if price closes beyond the protected liquidity extreme."),
     model,
     mode,
@@ -244,11 +272,13 @@ export class GeminiAnalyzer {
   }
 
   async analyze(body = {}) {
+    const ollamaKey = ollamaApiKey();
     const openRouterKey = openRouterApiKey();
     const key = apiKey();
-    if (!openRouterKey && !key) throw new Error("OPENROUTER_API_KEY or GEMINI_API_KEY is required");
+    if (!ollamaKey && !openRouterKey && !key) throw new Error("OLLAMA_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY is required");
 
     const imageParts = toImageParts(body);
+    const ollamaImages = toOllamaImages(body);
     const datasets = await this.datasets();
     const prompt = [
       "You are OGFX Agent, a demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
@@ -264,41 +294,88 @@ export class GeminiAnalyzer {
       `Required OGFX datasets and PDF strategy logic: ${JSON.stringify(datasets).slice(0, 11000)}`,
     ].join("\n\n");
 
+    const errors = [];
+    if (ollamaKey) {
+      const model = ollamaModel(ollamaImages.length > 0);
+      try {
+        const response = await fetch(OLLAMA_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${ollamaKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{
+              role: "user",
+              content: prompt,
+              ...(ollamaImages.length ? { images: ollamaImages } : {}),
+            }],
+            stream: false,
+            format: "json",
+            options: {
+              temperature: 0.1,
+              num_predict: 800,
+            },
+          }),
+        });
+
+        const raw = await response.text();
+        if (!response.ok) {
+          throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
+        }
+
+        const payload = JSON.parse(raw || "{}");
+        const text = payload?.message?.content ?? payload?.response ?? "{}";
+        return coerceDecision(parseJson(text), model, "ollama");
+      } catch (error) {
+        errors.push(String(error?.message || error));
+      }
+    }
+
     if (openRouterKey) {
       const model = openRouterModel();
-      const response = await fetch(OPENROUTER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${openRouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
-          "X-Title": "OGFX Elite SMC Trading Engine",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{
-            role: "user",
-            content: toOpenRouterImageParts(body).length
-              ? [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)]
-              : prompt,
-          }],
-          temperature: 0.1,
-          max_tokens: 800,
-          response_format: { type: "json_object" },
-        }),
-      });
+      try {
+        const response = await fetch(OPENROUTER_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${openRouterKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
+            "X-Title": "OGFX Elite SMC Trading Engine",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{
+              role: "user",
+              content: toOpenRouterImageParts(body).length
+                ? [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)]
+                : prompt,
+            }],
+            temperature: 0.1,
+            max_tokens: 800,
+            response_format: { type: "json_object" },
+          }),
+        });
 
-      const raw = await response.text();
-      if (!response.ok) {
-        throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+        const raw = await response.text();
+        if (!response.ok) {
+          throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+        }
+
+        const payload = JSON.parse(raw || "{}");
+        const content = payload?.choices?.[0]?.message?.content;
+        const text = Array.isArray(content)
+          ? content.map((part) => part?.text || "").join("")
+          : String(content || "{}");
+        return coerceDecision(parseJson(text), model, "openrouter");
+      } catch (error) {
+        errors.push(String(error?.message || error));
       }
+    }
 
-      const payload = JSON.parse(raw || "{}");
-      const content = payload?.choices?.[0]?.message?.content;
-      const text = Array.isArray(content)
-        ? content.map((part) => part?.text || "").join("")
-        : String(content || "{}");
-      return coerceDecision(parseJson(text), model, "openrouter");
+    if (!key) {
+      throw new Error(errors[0] || "AI provider unavailable and GEMINI_API_KEY is not configured");
     }
 
     const model = await this.resolveModel(imageParts.length > 0);
