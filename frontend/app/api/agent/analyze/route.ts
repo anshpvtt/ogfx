@@ -21,23 +21,31 @@ type AgentDecision = {
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-async function readJson(relativePath: string) {
+async function readJson(relativePath: string, fallback: any = {}) {
   const root = path.basename(process.cwd()) === "frontend" ? path.resolve(process.cwd(), "..") : process.cwd();
-  const raw = await readFile(path.join(root, relativePath), "utf8");
-  return JSON.parse(raw);
+  try {
+    const raw = await readFile(path.join(root, relativePath), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }
 
-async function readText(relativePath: string) {
+async function readText(relativePath: string, fallback = "") {
   const root = path.basename(process.cwd()) === "frontend" ? path.resolve(process.cwd(), "..") : process.cwd();
-  return readFile(path.join(root, relativePath), "utf8");
+  try {
+    return await readFile(path.join(root, relativePath), "utf8");
+  } catch {
+    return fallback;
+  }
 }
 
 async function loadDatasets() {
   const [defaultStrategy, smcStrategy, strategyLibrary, pdfStrategyText] = await Promise.all([
-    readJson("strategies/default.json"),
-    readJson("strategies/smc.json"),
-    readJson("backend/data/strategies.json"),
-    readText("docs/SMC-STRATEGY.md").catch(() => ""),
+    readJson("strategies/default.json", {}),
+    readJson("strategies/smc.json", {}),
+    readJson("backend/data/strategies.json", []),
+    readText("docs/SMC-STRATEGY.md", ""),
   ]);
 
   return {

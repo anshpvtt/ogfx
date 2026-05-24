@@ -110,6 +110,21 @@ function parseGemmaJson(text) {
 }
 
 async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
+  if (!analysis.hasSetup) {
+    return {
+      confirmed: false,
+      direction: "WAIT",
+      confidence: Number(analysis.confidence || 0),
+      reason: analysis.reason || "No local SMC setup; AI confirmation skipped to protect free quota.",
+      entry: analysis.entry,
+      sl: analysis.sl,
+      tp: analysis.tp,
+      model: "local-smc-precheck",
+      provider: "local",
+      fallback: true,
+    };
+  }
+
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     const model = process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";

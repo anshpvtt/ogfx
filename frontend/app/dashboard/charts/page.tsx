@@ -68,7 +68,7 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "local-demo";
+  mode: "gemma" | "openrouter" | "local-demo";
 };
 
 type DemoAccount = {
@@ -208,6 +208,38 @@ function decisionFromSignalPayload(payload: any): AgentDecision {
     model: String(gemma.model ?? "gemma-3-27b-it"),
     mode: gemma.fallback ? "local-demo" : "gemma",
   };
+}
+
+function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
+  const decision = payload?.decision;
+  if (!decision) return null;
+  return {
+    decision: decision.decision === "BUY" || decision.decision === "SELL" ? decision.decision : "WAIT",
+    confidence: Number(decision.confidence ?? 0),
+    entry: Number.isFinite(Number(decision.entry)) ? Number(decision.entry) : null,
+    stopLoss: Number.isFinite(Number(decision.stopLoss)) ? Number(decision.stopLoss) : null,
+    takeProfit: Number.isFinite(Number(decision.takeProfit)) ? Number(decision.takeProfit) : null,
+    riskReward: Number.isFinite(Number(decision.riskReward)) ? Number(decision.riskReward) : null,
+    bias: String(decision.bias ?? "NEUTRAL"),
+    summary: String(decision.summary ?? "WAIT - Waiting for clean market snapshot."),
+    reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : [],
+    invalidation: String(decision.invalidation ?? "Invalid if price closes beyond the protected structure."),
+    model: String(decision.model ?? "google/gemma-4-26b-a4b-it:free"),
+    mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : "openrouter",
+  };
+}
+
+function warningFromGemma(gemma: any, fallbackWarning?: string) {
+  if (fallbackWarning) return fallbackWarning;
+  if (!gemma?.fallback) return "";
+  const reason = String(gemma.reason || "");
+  if (/rate.?limit|429|free-models-per-day|temporarily/i.test(reason)) {
+    return "OpenRouter free Gemma quota/rate limit is active; OGFX local SMC fallback is being used until the free provider allows requests again.";
+  }
+  if (/key is not configured|key missing|required/i.test(reason)) {
+    return "AI key missing on backend; OGFX local SMC fallback is active.";
+  }
+  return "AI provider unavailable; OGFX local SMC fallback is active.";
 }
 
 function levelPercent(price: number, min: number, max: number) {
@@ -374,8 +406,34 @@ export default function DashboardChartsPage() {
           userId,
         }),
       });
-      setAgentDecision(decisionFromSignalPayload(payload));
-      setAgentWarning(payload.gemma?.fallback ? "Gemma key missing on backend; SMC fallback is active." : "");
+      let nextDecision = decisionFromSignalPayload(payload);
+      let nextWarning = warningFromGemma(payload.gemma);
+
+      if (agentImage && activeSnapshot?.latest) {
+        const response = await fetch("/api/agent/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assetId: activeAsset.id,
+            interval: chartIntervalToApi(interval.value),
+            snapshot: activeSnapshot,
+            imageDataUrl: agentImage,
+            strategyLogic: {
+              source: "Live Charts attached screenshot",
+              rule: "Use OGFX SMC confluence: liquidity sweep, BOS/MSS/CHOCH, order block, FVG, HTF bias, and TP/SL risk preservation.",
+            },
+            requireGemma: true,
+          }),
+        });
+        const raw = await response.text();
+        const imagePayload = raw ? JSON.parse(raw) : {};
+        if (!response.ok) throw new Error(imagePayload.error || "Chart image analysis failed");
+        nextDecision = decisionFromAnalyzePayload(imagePayload) ?? nextDecision;
+        nextWarning = warningFromGemma(payload.gemma, imagePayload.warning);
+      }
+
+      setAgentDecision(nextDecision);
+      setAgentWarning(nextWarning);
     } catch (error) {
       setAgentWarning(error instanceof Error ? error.message : "Agent analysis failed");
     } finally {
