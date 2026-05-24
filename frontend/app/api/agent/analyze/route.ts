@@ -73,6 +73,17 @@ function getOpenRouterModel() {
   return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
 }
 
+function friendlyAiError(error: any) {
+  const message = String(error?.message || error || "AI provider unavailable");
+  if (/free-models-per-day/i.test(message)) {
+    return "OpenRouter free model daily limit reached for this account. OGFX local SMC fallback is active until quota resets or credits are added.";
+  }
+  if (/429|rate.?limit|temporarily/i.test(message)) {
+    return "OpenRouter Gemma 4 31B is temporarily rate-limited upstream. OGFX local SMC fallback is active.";
+  }
+  return message.length > 220 ? `${message.slice(0, 217)}...` : message;
+}
+
 async function resolveGemmaModel(apiKey: string, needsVision = false) {
   const configured = process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
   if (configured && !(needsVision && configured.toLowerCase().includes("gemma"))) {
@@ -370,7 +381,7 @@ export async function POST(request: NextRequest) {
     const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
     return NextResponse.json({ decision: coerceDecision(rawDecision, model, "gemma") });
   } catch (error: any) {
-    const message = error?.message || "Gemma analysis failed";
+    const message = friendlyAiError(error);
     const providerRateLimited = /429|rate.?limit|temporarily/i.test(message);
     if (requireGemma && !providerRateLimited) {
       return NextResponse.json(
@@ -381,7 +392,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       decision: localDecision(body, model),
-      warning: `${message}. Using OGFX local SMC fallback.`,
+      warning: message,
     });
   }
 }

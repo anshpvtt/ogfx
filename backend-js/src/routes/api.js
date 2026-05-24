@@ -109,6 +109,17 @@ function parseGemmaJson(text) {
   }
 }
 
+function friendlyAiError(error) {
+  const message = String(error?.message || error || "AI provider unavailable");
+  if (/free-models-per-day/i.test(message)) {
+    return "OpenRouter free model daily limit reached for this account. OGFX local SMC fallback is active until quota resets or credits are added.";
+  }
+  if (/429|rate.?limit|temporarily/i.test(message)) {
+    return "OpenRouter Gemma 4 31B is temporarily rate-limited upstream. OGFX local SMC fallback is active.";
+  }
+  return message.length > 220 ? `${message.slice(0, 217)}...` : message;
+}
+
 async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
   if (!analysis.hasSetup) {
     return {
@@ -181,7 +192,7 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
         confirmed: Boolean(analysis.hasSetup),
         direction: analysis.direction || "WAIT",
         confidence: Number(analysis.confidence || 0),
-        reason: `${error?.message || "OpenRouter Gemma unavailable"}; OGFX local SMC fallback used.`,
+        reason: friendlyAiError(error),
         entry: analysis.entry,
         sl: analysis.sl,
         tp: analysis.tp,
