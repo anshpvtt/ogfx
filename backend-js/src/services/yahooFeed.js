@@ -49,6 +49,7 @@ function cleanCandle(quote) {
   const low = Number(quote.low);
   const close = Number(quote.close);
   if (![open, high, low, close].every(Number.isFinite)) return null;
+  if (open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
 
   const time = quote.date instanceof Date ? quote.date : new Date(quote.date ?? Date.now());
   return {
