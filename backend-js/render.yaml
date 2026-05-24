@@ -2,7 +2,7 @@ services:
   - type: web
     name: ogfx-render-agent
     runtime: node
-    plan: starter
+    plan: free
     region: singapore
     buildCommand: npm ci && npx prisma generate
     startCommand: npm start
@@ -39,7 +39,7 @@ services:
       - key: TWELVEDATA_API_KEY
         sync: false
       - key: LIVE_AGENT_ENABLED
-        value: true
+        value: false
       - key: LIVE_AGENT_INTERVAL_SECONDS
         value: 60
       - key: LIVE_AGENT_SIGNAL_GAP_MINUTES

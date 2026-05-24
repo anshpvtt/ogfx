@@ -1,0 +1,11 @@
+name = "ogfx-render-keepalive"
+main = "src/index.js"
+compatibility_date = "2026-05-24"
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+RENDER_HEALTH_URL = "https://ogfx-render-agent-free.onrender.com/health"
+AGENT_TICK_URL = "https://ogfx-render-agent-free.onrender.com/agent/tick"
+RUN_AGENT_TICK = "false"

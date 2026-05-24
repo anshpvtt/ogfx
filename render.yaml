@@ -2,7 +2,7 @@ services:
   - type: web
     name: ogfx-render-agent
     runtime: node
-    plan: starter
+    plan: free
     region: singapore
     rootDir: backend-js
     buildCommand: npm ci && npx prisma generate
@@ -36,7 +36,7 @@ services:
       - key: CORS_ORIGIN
         value: https://ogfx-frontend.vercel.app
       - key: LIVE_AGENT_ENABLED
-        value: true
+        value: false
       - key: LIVE_AGENT_INTERVAL_SECONDS
         value: 60
       - key: LIVE_AGENT_SIGNAL_GAP_MINUTES
