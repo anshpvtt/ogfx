@@ -127,7 +127,7 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
-    const model = process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+    const model = process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
     const prompt = [
       "You are OGFX Agent, an elite but demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
       "Use the OGFX strategy: order blocks, BOS/MSS/CHOCH, fair value gaps, liquidity sweeps, HTF bias, TP/SL discipline, and risk preservation.",

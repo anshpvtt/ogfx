@@ -224,7 +224,7 @@ function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
     summary: String(decision.summary ?? "WAIT - Waiting for clean market snapshot."),
     reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : [],
     invalidation: String(decision.invalidation ?? "Invalid if price closes beyond the protected structure."),
-    model: String(decision.model ?? "google/gemma-4-26b-a4b-it:free"),
+    model: String(decision.model ?? "google/gemma-4-31b-it:free"),
     mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : "openrouter",
   };
 }
@@ -389,7 +389,7 @@ export default function DashboardChartsPage() {
     }));
   }, [activeAsset.id, activeSnapshot?.latest?.time, settings?.default_size]);
 
-  async function runAgent() {
+  async function runAgent(forceAi = false) {
     if (!userId) {
       setAgentWarning("Authentication required before analysis.");
       return;
@@ -409,7 +409,7 @@ export default function DashboardChartsPage() {
       let nextDecision = decisionFromSignalPayload(payload);
       let nextWarning = warningFromGemma(payload.gemma);
 
-      if (agentImage && activeSnapshot?.latest) {
+      if ((forceAi || agentImage) && activeSnapshot?.latest) {
         const response = await fetch("/api/agent/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -417,9 +417,9 @@ export default function DashboardChartsPage() {
             assetId: activeAsset.id,
             interval: chartIntervalToApi(interval.value),
             snapshot: activeSnapshot,
-            imageDataUrl: agentImage,
+            imageDataUrl: agentImage || undefined,
             strategyLogic: {
-              source: "Live Charts attached screenshot",
+              source: agentImage ? "Live Charts attached screenshot" : "Live Charts manual analysis",
               rule: "Use OGFX SMC confluence: liquidity sweep, BOS/MSS/CHOCH, order block, FVG, HTF bias, and TP/SL risk preservation.",
             },
             requireGemma: true,
@@ -429,7 +429,7 @@ export default function DashboardChartsPage() {
         const imagePayload = raw ? JSON.parse(raw) : {};
         if (!response.ok) throw new Error(imagePayload.error || "Chart image analysis failed");
         nextDecision = decisionFromAnalyzePayload(imagePayload) ?? nextDecision;
-        nextWarning = warningFromGemma(payload.gemma, imagePayload.warning);
+        nextWarning = imagePayload.warning || "";
       }
 
       setAgentDecision(nextDecision);
@@ -443,7 +443,7 @@ export default function DashboardChartsPage() {
 
   useEffect(() => {
     if (!userId) return;
-    runAgent();
+    runAgent(false);
     const handle = window.setInterval(runAgent, 60000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -836,7 +836,7 @@ export default function DashboardChartsPage() {
                   <Bot className="h-4 w-4 text-cyan-200" />
                   Gemma vision analyst
                 </div>
-                <Button type="button" size="sm" variant="glass" onClick={runAgent} disabled={agentLoading} className="h-8 rounded-lg">
+                <Button type="button" size="sm" variant="glass" onClick={() => runAgent(true)} disabled={agentLoading} className="h-8 rounded-lg">
                   {agentLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                   Analyze
                 </Button>

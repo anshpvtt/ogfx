@@ -70,7 +70,7 @@ function getOpenRouterApiKey() {
 }
 
 function getOpenRouterModel() {
-  return process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+  return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
 }
 
 async function resolveGemmaModel(apiKey: string, needsVision = false) {

@@ -43,7 +43,7 @@ function openRouterApiKey() {
 }
 
 function openRouterModel() {
-  return process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+  return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
 }
 
 function stripModelName(model) {
