@@ -96,11 +96,15 @@ function parseGemmaJson(text) {
     .trim();
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    if (start >= 0 && end > start) {
+      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    }
     throw new Error("Gemma returned non-JSON content");
   }
 }
@@ -119,43 +123,58 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
       `Local SMC engine result: ${JSON.stringify(analysis)}`,
     ].join("\n\n");
 
-    const response = await fetch(OPENROUTER_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openRouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
-        "X-Title": "OGFX Elite SMC Trading Engine",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-        temperature: 0.1,
-        max_tokens: 700,
-        response_format: { type: "json_object" },
-      }),
-    });
+    try {
+      const response = await fetch(OPENROUTER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
+          "X-Title": "OGFX Elite SMC Trading Engine",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+          max_tokens: 700,
+          response_format: { type: "json_object" },
+        }),
+      });
 
-    const raw = await response.text();
-    if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
-    const payload = JSON.parse(raw || "{}");
-    const content = payload?.choices?.[0]?.message?.content;
-    const text = Array.isArray(content)
-      ? content.map((part) => part?.text || "").join("")
-      : String(content || "{}");
-    const parsed = parseGemmaJson(text);
-    return {
-      confirmed: Boolean(parsed.confirmed),
-      direction: parsed.direction === "BUY" || parsed.direction === "SELL" ? parsed.direction : analysis.direction || "WAIT",
-      confidence: Math.max(0, Math.min(100, numeric(parsed.confidence, analysis.confidence || 0))),
-      reason: String(parsed.reason || analysis.reason || "OpenRouter Gemma SMC confluence check complete"),
-      entry: numeric(parsed.entry, analysis.entry),
-      sl: numeric(parsed.sl, analysis.sl),
-      tp: numeric(parsed.tp, analysis.tp),
-      model,
-      provider: "openrouter",
-      fallback: false,
-    };
+      const raw = await response.text();
+      if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+      const payload = JSON.parse(raw || "{}");
+      const content = payload?.choices?.[0]?.message?.content;
+      const text = Array.isArray(content)
+        ? content.map((part) => part?.text || "").join("")
+        : String(content || "{}");
+      const parsed = parseGemmaJson(text);
+      return {
+        confirmed: Boolean(parsed.confirmed),
+        direction: parsed.direction === "BUY" || parsed.direction === "SELL" ? parsed.direction : analysis.direction || "WAIT",
+        confidence: Math.max(0, Math.min(100, numeric(parsed.confidence, analysis.confidence || 0))),
+        reason: String(parsed.reason || analysis.reason || "OpenRouter Gemma SMC confluence check complete"),
+        entry: numeric(parsed.entry, analysis.entry),
+        sl: numeric(parsed.sl, analysis.sl),
+        tp: numeric(parsed.tp, analysis.tp),
+        model,
+        provider: "openrouter",
+        fallback: false,
+      };
+    } catch (error) {
+      return {
+        confirmed: Boolean(analysis.hasSetup),
+        direction: analysis.direction || "WAIT",
+        confidence: Number(analysis.confidence || 0),
+        reason: `${error?.message || "OpenRouter Gemma unavailable"}; OGFX local SMC fallback used.`,
+        entry: analysis.entry,
+        sl: analysis.sl,
+        tp: analysis.tp,
+        model,
+        provider: "openrouter",
+        fallback: true,
+      };
+    }
   }
 
   const key = process.env.GEMMA_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY;

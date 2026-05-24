@@ -113,11 +113,15 @@ function parseJson(text) {
     .trim();
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    if (start >= 0 && end > start) {
+      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    }
     throw new Error("Gemini returned non-JSON analysis");
   }
 }
@@ -274,7 +278,9 @@ export class GeminiAnalyzer {
           model,
           messages: [{
             role: "user",
-            content: [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)],
+            content: toOpenRouterImageParts(body).length
+              ? [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)]
+              : prompt,
           }],
           temperature: 0.1,
           max_tokens: 800,

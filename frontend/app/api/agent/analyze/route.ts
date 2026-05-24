@@ -199,12 +199,14 @@ function parseGemmaJson(text: string) {
     .trim();
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1));
+      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
     }
     throw new Error("Gemma returned non-JSON analysis");
   }
@@ -281,7 +283,7 @@ async function callOpenRouter({
       model,
       messages: [{
         role: "user",
-        content: [{ type: "text", text: prompt }, ...imageParts],
+        content: imageParts.length ? [{ type: "text", text: prompt }, ...imageParts] : prompt,
       }],
       temperature: 0.1,
       max_tokens: 700,
@@ -360,16 +362,18 @@ export async function POST(request: NextRequest) {
     const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
     return NextResponse.json({ decision: coerceDecision(rawDecision, model, "gemma") });
   } catch (error: any) {
-    if (requireGemma) {
+    const message = error?.message || "Gemma analysis failed";
+    const providerRateLimited = /429|rate.?limit|temporarily/i.test(message);
+    if (requireGemma && !providerRateLimited) {
       return NextResponse.json(
-        { error: error?.message || "Gemma analysis failed" },
+        { error: message },
         { status: 502 }
       );
     }
 
     return NextResponse.json({
       decision: localDecision(body, model),
-      warning: error?.message || "Gemma analysis failed. Using local demo agent.",
+      warning: `${message}. Using OGFX local SMC fallback.`,
     });
   }
 }
