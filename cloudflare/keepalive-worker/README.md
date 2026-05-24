@@ -13,6 +13,10 @@ npx wrangler login
 npx wrangler deploy
 ```
 
+This Cloudflare account now has the free account subdomain `ogfx-ansh74619.workers.dev` registered. Cloudflare requires one account-level `workers.dev` subdomain before cron triggers can be saved.
+
+The worker itself has `workers_dev = false`, so it does not expose a public Worker URL. If deploying from a different Cloudflare account, choose a short unique subdomain such as `ogfx-yourname`; do not enter `https://ogfx-frontend.vercel.app`, because that is the Vercel frontend URL, not a Cloudflare `workers.dev` account subdomain.
+
 ## Optional Agent Tick
 
 The default config only calls `/health`. To trigger the agent endpoint too:

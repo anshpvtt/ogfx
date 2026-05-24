@@ -1,6 +1,7 @@
 name = "ogfx-render-keepalive"
 main = "src/index.js"
 compatibility_date = "2026-05-24"
+workers_dev = false
 
 [triggers]
 crons = ["*/10 * * * *"]
