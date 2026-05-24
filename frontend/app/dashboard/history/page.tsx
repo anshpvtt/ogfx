@@ -15,8 +15,8 @@ export default function DashboardHistoryPage() {
   const [loading, setLoading] = useState(true);
   const summaryCards = [
     { label: "Demo orders", value: orders.length, icon: Wallet },
-    { label: "Open trades", value: orders.filter((order) => order.status === "OPEN").length, icon: Activity },
-    { label: "Closed trades", value: orders.filter((order) => order.status !== "OPEN").length, icon: ChevronDown },
+    { label: "Open trades", value: orders.filter((order) => ["OPEN", "open", "pending"].includes(order.status)).length, icon: Activity },
+    { label: "Closed trades", value: orders.filter((order) => !["OPEN", "open", "pending"].includes(order.status)).length, icon: ChevronDown },
     { label: "Backtests", value: rows.length, icon: ChevronRight },
   ];
 
@@ -25,10 +25,10 @@ export default function DashboardHistoryPage() {
 
     async function load() {
       setLoading(true);
-      let query = supabase.from("backtests").select("*").order("created_at", { ascending: false });
-      if (pair) query = query.eq("pair", pair);
+      let query = supabase.from("backtest_runs").select("*").order("created_at", { ascending: false });
+      if (pair) query = query.eq("symbol", pair);
       let orderQuery = supabase.from("demo_orders").select("*").order("opened_at", { ascending: false }).limit(100);
-      if (pair) orderQuery = orderQuery.eq("asset_id", pair);
+      if (pair) orderQuery = orderQuery.or(`asset_id.eq.${pair},symbol.eq.${pair}`);
       const [{ data }, { data: orderData }] = await Promise.all([query, orderQuery]);
       setRows(data ?? []);
       setOrders(orderData ?? []);
@@ -104,10 +104,10 @@ export default function DashboardHistoryPage() {
                   {orders.map((order) => (
                     <tr key={order.id}>
                       <td>{new Date(order.opened_at).toLocaleString()}</td>
-                      <td className="sym">{order.asset_id}</td>
-                      <td className={order.side === "BUY" ? "buy-val" : "sell-val"}>{order.side}</td>
-                      <td>{order.size}</td>
-                      <td>{order.entry}</td>
+                      <td className="sym">{order.symbol ?? order.asset_id}</td>
+                      <td className={(order.direction ?? order.side) === "BUY" ? "buy-val" : "sell-val"}>{order.direction ?? order.side}</td>
+                      <td>{order.lot_size ?? order.size}</td>
+                      <td>{order.entry_price ?? order.entry}</td>
                       <td>{order.stop_loss}</td>
                       <td>{order.take_profit}</td>
                       <td>{order.status}</td>
@@ -140,13 +140,13 @@ export default function DashboardHistoryPage() {
                 <thead>
                   <tr>
                     <th></th>
-                    <th>Pair</th>
+                    <th>Symbol</th>
                     <th>Timeframe</th>
                     <th>Dates</th>
                     <th>Trades</th>
                     <th>Win rate</th>
-                    <th>PF</th>
-                    <th>Final</th>
+                    <th>PnL</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -154,20 +154,20 @@ export default function DashboardHistoryPage() {
                     <Fragment key={row.id}>
                       <tr key={row.id} className="cursor-pointer" onClick={() => setExpanded(expanded === row.id ? null : row.id)}>
                         <td>{expanded === row.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
-                        <td className="sym">{row.pair}</td>
+                        <td className="sym">{row.symbol ?? row.pair}</td>
                         <td>{row.timeframe}</td>
                         <td>{row.start_date} - {row.end_date}</td>
                         <td>{row.total_trades ?? 0}</td>
                         <td>{row.win_rate ?? 0}%</td>
-                        <td>{row.profit_factor ?? 0}</td>
-                        <td>{row.final_balance ?? 0}</td>
+                        <td>{row.total_pnl ?? row.result_json?.totalPnl ?? 0}</td>
+                        <td>{row.status ?? "completed"}</td>
                       </tr>
                       {expanded === row.id ? (
                         <tr>
                           <td colSpan={8}>
                             <div className="max-h-72 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
-                              {(row.trade_log ?? []).length ? (
-                                <pre className="whitespace-pre-wrap text-xs text-slate-400">{JSON.stringify(row.trade_log, null, 2)}</pre>
+                              {(row.result_json?.tradeLog ?? row.trade_log ?? []).length ? (
+                                <pre className="whitespace-pre-wrap text-xs text-slate-400">{JSON.stringify(row.result_json?.tradeLog ?? row.trade_log, null, 2)}</pre>
                               ) : (
                                 <div className="text-sm text-slate-400">No trades in this run.</div>
                               )}

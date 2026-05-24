@@ -1,6 +1,6 @@
 # OGFX Render Keepalive Worker
 
-Free Cloudflare Worker cron that pings the Render backend every 10 minutes.
+Free Cloudflare Worker cron that pings the Render backend and can trigger the market scanner every 5 minutes.
 
 This is a free best-effort keepalive for Render Free. It is not a hard 24/7 guarantee.
 
@@ -16,6 +16,12 @@ npx wrangler deploy
 This Cloudflare account now has the free account subdomain `ogfx-ansh74619.workers.dev` registered. Cloudflare requires one account-level `workers.dev` subdomain before cron triggers can be saved.
 
 The worker itself has `workers_dev = false`, so it does not expose a public Worker URL. If deploying from a different Cloudflare account, choose a short unique subdomain such as `ogfx-yourname`; do not enter `https://ogfx-frontend.vercel.app`, because that is the Vercel frontend URL, not a Cloudflare `workers.dev` account subdomain.
+
+Set the scanner secret before deploying with market scanning enabled:
+
+```powershell
+npx wrangler secret put CRON_SECRET
+```
 
 ## Optional Agent Tick
 

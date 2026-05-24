@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { LIVE_CHART_TIMEFRAMES, TRADING_ASSETS } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
+import { backendJson, chartIntervalToApi } from "@/lib/backend-api";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const TradingViewAdvancedChart = dynamic(
@@ -109,6 +111,22 @@ type DemoOrder = {
   pnl: number | null;
 };
 
+type BackendOrder = {
+  id: string;
+  symbol: string;
+  direction: "BUY" | "SELL";
+  lotSize: number;
+  entry: number;
+  sl: number;
+  tp: number;
+  status: "open" | "pending" | "closed";
+  pnl: number | null;
+  openedAt: string;
+  closedAt: string | null;
+  closePrice: number | null;
+  raw?: Partial<DemoOrder>;
+};
+
 const DEFAULT_INTERVAL = LIVE_CHART_TIMEFRAMES[0];
 
 function snapshotTimeframe(interval: string) {
@@ -144,6 +162,54 @@ function defaultLevels(side: "BUY" | "SELL", snapshot?: MarketSnapshot) {
   };
 }
 
+function toDemoOrder(order: BackendOrder | DemoOrder): DemoOrder {
+  const raw = ("raw" in order ? order.raw ?? {} : order) as Partial<DemoOrder>;
+  const status = "status" in order ? String(order.status).toLowerCase() : "open";
+  return {
+    id: order.id,
+    asset_id: "asset_id" in order ? order.asset_id : order.symbol,
+    trading_view_symbol: raw.trading_view_symbol ?? null,
+    side: "side" in order ? order.side : order.direction,
+    entry: "entry" in order ? Number(order.entry) : 0,
+    stop_loss: "stop_loss" in order ? Number(order.stop_loss) : Number(order.sl),
+    take_profit: "take_profit" in order ? Number(order.take_profit) : Number(order.tp),
+    size: "size" in order ? Number(order.size) : Number(order.lotSize),
+    status: status === "closed" ? "CLOSED" : status === "pending" ? "OPEN" : "OPEN",
+    source: raw.source ?? "manual",
+    strategy_name: raw.strategy_name ?? null,
+    confidence: raw.confidence ?? null,
+    reason: raw.reason ?? null,
+    opened_at: "opened_at" in order ? order.opened_at : order.openedAt,
+    closed_at: "closed_at" in order ? order.closed_at : order.closedAt,
+    exit_price: raw.exit_price ?? ("closePrice" in order ? order.closePrice : null),
+    pnl: order.pnl,
+  };
+}
+
+function decisionFromSignalPayload(payload: any): AgentDecision {
+  const gemma = payload.gemma ?? {};
+  const analysis = payload.analysis ?? {};
+  const direction = payload.confirmed && (gemma.direction === "BUY" || gemma.direction === "SELL")
+    ? gemma.direction
+    : "WAIT";
+  const reason = gemma.reason || analysis.reason || "WAIT - Waiting for clean market snapshot";
+
+  return {
+    decision: direction,
+    confidence: Number(gemma.confidence ?? analysis.confidence ?? 0),
+    entry: Number.isFinite(Number(gemma.entry ?? analysis.entry)) ? Number(gemma.entry ?? analysis.entry) : null,
+    stopLoss: Number.isFinite(Number(gemma.sl ?? analysis.sl)) ? Number(gemma.sl ?? analysis.sl) : null,
+    takeProfit: Number.isFinite(Number(gemma.tp ?? analysis.tp)) ? Number(gemma.tp ?? analysis.tp) : null,
+    riskReward: Number.isFinite(Number(analysis.rr)) ? Number(analysis.rr) : null,
+    bias: String(analysis.bias ?? "NEUTRAL"),
+    summary: direction === "WAIT" ? `WAIT - ${reason}` : reason,
+    reasons: [reason, analysis.structure?.lastBOS ? `BOS: ${analysis.structure.lastBOS.direction}` : "No confirmed BOS yet"].filter(Boolean),
+    invalidation: "Invalid if price closes beyond the protected order-block/FVG extreme.",
+    model: String(gemma.model ?? "gemma-3-27b-it"),
+    mode: gemma.fallback ? "local-demo" : "gemma",
+  };
+}
+
 function levelPercent(price: number, min: number, max: number) {
   if (!Number.isFinite(price) || max <= min) return 50;
   return Math.max(8, Math.min(92, 100 - ((price - min) / (max - min)) * 100));
@@ -160,6 +226,7 @@ export default function DashboardChartsPage() {
   const [account, setAccount] = useState<DemoAccount | null>(null);
   const [settings, setSettings] = useState<DemoSettings | null>(null);
   const [orders, setOrders] = useState<DemoOrder[]>([]);
+  const [userId, setUserId] = useState("");
   const [syncingAccount, setSyncingAccount] = useState(false);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentWarning, setAgentWarning] = useState("");
@@ -220,6 +287,13 @@ export default function DashboardChartsPage() {
     },
   ];
 
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setUserId(data.user?.id ?? "");
+    });
+  }, []);
+
   async function loadSnapshots() {
     setSnapshotsLoading(true);
     try {
@@ -234,18 +308,19 @@ export default function DashboardChartsPage() {
   }
 
   async function loadDemoAccount() {
+    if (!userId) return;
     setSyncingAccount(true);
     try {
-      const response = await fetch("/api/demo/account", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Failed to sync demo account");
-      setAccount(payload.account);
-      setSettings(payload.settings);
-      setOrders(payload.orders ?? []);
-      setCapitalInput(String(Number(payload.account?.initial_balance ?? 10000)));
-      if (payload.closedBySync?.length) {
-        setNotice(`${payload.closedBySync.length} order closed by TP/SL sync.`);
-      }
+      const [accountPayload, ordersPayload] = await Promise.all([
+        backendJson<{ account: DemoAccount }>(`/api/demo/account/${userId}`),
+        backendJson<{ orders: BackendOrder[] }>(`/api/demo/orders/${userId}`),
+      ]);
+      setAccount(accountPayload.account);
+      setOrders((ordersPayload.orders ?? []).map(toDemoOrder));
+      setCapitalInput(String(Number(accountPayload.account?.initial_balance ?? accountPayload.account?.balance ?? 10000)));
+      const settingsResponse = await fetch("/api/demo/settings", { cache: "no-store" });
+      const settingsPayload = await settingsResponse.json().catch(() => ({}));
+      if (settingsResponse.ok) setSettings(settingsPayload.settings);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to sync demo account");
     } finally {
@@ -261,11 +336,12 @@ export default function DashboardChartsPage() {
   }, [interval.value, refreshKey]);
 
   useEffect(() => {
+    if (!userId) return;
     loadDemoAccount();
     const handle = window.setInterval(loadDemoAccount, 30000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     const handleFullscreen = () => setIsChartFullscreen(document.fullscreenElement === chartShellRef.current);
@@ -282,33 +358,24 @@ export default function DashboardChartsPage() {
   }, [activeAsset.id, activeSnapshot?.latest?.time, settings?.default_size]);
 
   async function runAgent() {
-    if (!activeSnapshot?.latest) return;
+    if (!userId) {
+      setAgentWarning("Authentication required before analysis.");
+      return;
+    }
     setAgentLoading(true);
     setAgentWarning("");
 
     try {
-      const response = await fetch("/api/agent/analyze", {
+      const payload = await backendJson<any>("/api/signal/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          assetId: activeAsset.id,
-          interval: interval.value,
-          snapshot: activeSnapshot,
-          imageDataUrl: agentImage || undefined,
-          openOrders: activeOpenOrders,
-          history: closedOrders.filter((order) => order.asset_id === activeAsset.id).slice(0, 10),
-          strategyLogic: {
-            source: "live-terminal",
-            rule: "Use the OGFX SMC datasets and PDF strategy logic only: liquidity sweep, BOS/MSS confirmation, HTF alignment, fair-value/imbalance context, session risk, and TP/SL discipline before any BUY or SELL.",
-          },
-          requireGemma: true,
+          symbol: activeAsset.id,
+          timeframe: chartIntervalToApi(interval.value),
+          userId,
         }),
       });
-      const raw = await response.text();
-      const payload = raw ? JSON.parse(raw) : {};
-      if (!response.ok) throw new Error(payload.error || "Agent analysis failed");
-      setAgentDecision(payload.decision);
-      setAgentWarning(payload.warning || "");
+      setAgentDecision(decisionFromSignalPayload(payload));
+      setAgentWarning(payload.gemma?.fallback ? "Gemma key missing on backend; SMC fallback is active." : "");
     } catch (error) {
       setAgentWarning(error instanceof Error ? error.message : "Agent analysis failed");
     } finally {
@@ -317,10 +384,12 @@ export default function DashboardChartsPage() {
   }
 
   useEffect(() => {
-    if (!activeSnapshot?.latest) return;
+    if (!userId) return;
     runAgent();
+    const handle = window.setInterval(runAgent, 60000);
+    return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAsset.id, interval.value, activeSnapshot?.latest?.time]);
+  }, [activeAsset.id, interval.value, userId]);
 
   function updateTicketSide(side: "BUY" | "SELL") {
     setTicket((current) => ({
@@ -407,46 +476,55 @@ export default function DashboardChartsPage() {
   }
 
   async function placeOrder() {
-    const response = await fetch("/api/demo/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        assetId: activeAsset.id,
-        side: ticket.side,
-        entry: Number(ticket.entry),
-        stopLoss: Number(ticket.stopLoss),
-        takeProfit: Number(ticket.takeProfit),
-        size: Number(ticket.size),
-        source: agentDecision?.decision === ticket.side ? "agent" : "manual",
-        confidence: agentDecision?.decision === ticket.side ? agentDecision.confidence : null,
-        reason: agentDecision?.decision === ticket.side ? agentDecision.summary : null,
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      setNotice(payload.error || "Failed to place demo order");
+    if (!userId) {
+      setNotice("Authentication required before placing demo orders.");
       return;
     }
+    try {
+      const payload = await backendJson<{ order: BackendOrder; account: DemoAccount }>("/api/demo/place-order", {
+        method: "POST",
+        body: JSON.stringify({
+          userId,
+          symbol: activeAsset.id,
+          direction: ticket.side,
+          lotSize: Number(ticket.size),
+          entry: Number(ticket.entry),
+          sl: Number(ticket.stopLoss),
+          tp: Number(ticket.takeProfit),
+          source: agentDecision?.decision === ticket.side ? "agent" : "manual",
+          confidence: agentDecision?.decision === ticket.side ? agentDecision.confidence : null,
+          reason: agentDecision?.decision === ticket.side ? agentDecision.summary : null,
+        }),
+      });
 
-    setOrders((current) => [payload.order, ...current]);
-    setAccount(payload.account);
-    setTerminalTab("OPEN");
-    setNotice(`${ticket.side} demo order saved to Supabase.`);
+      setOrders((current) => [toDemoOrder(payload.order), ...current]);
+      setAccount(payload.account);
+      setTerminalTab("OPEN");
+      setNotice(`Place demo ${ticket.side} succeeded.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to place demo order");
+    }
   }
 
   async function closeOrder(orderId: string) {
-    const response = await fetch(`/api/demo/orders/${orderId}/close`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      setNotice(payload.error || "Failed to close order");
+    if (!userId) {
+      setNotice("Authentication required before closing demo orders.");
       return;
     }
-    await loadDemoAccount();
-    setNotice("Order closed and capital synced.");
+    try {
+      await backendJson("/api/demo/close-order", {
+        method: "POST",
+        body: JSON.stringify({
+          orderId,
+          userId,
+          closePrice: activeSnapshot?.latest?.close ?? bidAsk.bid,
+        }),
+      });
+      await loadDemoAccount();
+      setNotice("Order closed and capital synced.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to close order");
+    }
   }
 
   return (

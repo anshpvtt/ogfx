@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, BarChart3, CalendarDays, Loader2, Play, SlidersHorizontal } from "lucide-react";
 import EquityChart from "@/components/EquityChart";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { BACKTEST_TIMEFRAMES, TRADING_ASSETS, groupTradingAssets } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { backendJson } from "@/lib/backend-api";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type BacktestPayload = {
@@ -60,6 +62,7 @@ export default function DashboardBacktestPage() {
   const [category, setCategory] = useState<"All" | keyof typeof groupedAssets>("All");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [userId, setUserId] = useState("");
   const [result, setResult] = useState<BacktestPayload | null>(null);
 
   const activeAsset = TRADING_ASSETS.find((asset) => asset.id === pair) ?? TRADING_ASSETS[0];
@@ -76,18 +79,39 @@ export default function DashboardBacktestPage() {
     }));
   }, [result]);
 
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setUserId(data.user?.id ?? "");
+    });
+  }, []);
+
   async function run() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/backtest", {
+      if (!userId) throw new Error("Authentication required before running a backtest");
+      if (!startDate || !endDate) throw new Error("Select both start and end dates");
+      if (new Date(startDate) >= new Date(endDate)) throw new Error("End date must be after start date");
+
+      const payload = await backendJson<any>("/api/backtest/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pair, timeframe, startDate, endDate }),
+        body: JSON.stringify({ userId, symbol: pair, timeframe, startDate, endDate }),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Backtest failed");
-      setResult(payload);
+      const backendResult = payload.result ?? {};
+      setResult({
+        backtestId: payload.backtestRun?.id ?? crypto.randomUUID(),
+        summary: {
+          totalTrades: backendResult.totalTrades ?? 0,
+          winRate: backendResult.winRate ?? 0,
+          profitFactor: backendResult.profitFactor ?? 0,
+          maxDrawdown: backendResult.maxDrawdown ?? 0,
+          finalBalance: backendResult.finalBalance ?? 10000,
+          sharpeRatio: backendResult.sharpeRatio ?? 0,
+        },
+        equityCurve: backendResult.equityCurve ?? [],
+        tradeLog: backendResult.tradeLog ?? [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backtest failed");
     } finally {
@@ -118,7 +142,7 @@ export default function DashboardBacktestPage() {
             </Button>
             <Button onClick={run} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              Run backtest
+              {loading ? "Running 10-30s" : "Run backtest"}
             </Button>
           </>
         }
@@ -227,7 +251,7 @@ export default function DashboardBacktestPage() {
 
             <Button onClick={run} disabled={loading} className="h-12 w-full rounded-2xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              Run {activeAsset.id}
+              {loading ? "Running 10-30s" : `Run ${activeAsset.id}`}
             </Button>
             {error ? <div className="rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</div> : null}
           </CardContent>

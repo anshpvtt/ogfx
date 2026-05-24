@@ -30,6 +30,8 @@ services:
         value: gemini-2.5-flash
       - key: AGENT_SECRET
         generateValue: true
+      - key: CRON_SECRET
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGIN
@@ -54,3 +56,16 @@ services:
         value: 10
       - key: MIN_CONFIDENCE
         value: 68
+  - type: cron
+    name: ogfx-market-scanner
+    runtime: node
+    plan: free
+    region: singapore
+    schedule: "*/5 * * * *"
+    buildCommand: npm ci
+    startCommand: node scripts/scan-market-cron.js
+    envVars:
+      - key: BACKEND_URL
+        value: https://ogfx-render-agent-free.onrender.com
+      - key: CRON_SECRET
+        sync: false

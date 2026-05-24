@@ -6,6 +6,7 @@ dist/
 build/
 logs/
 *.log
+supabase/.temp/
 
 .agents/
 .codex/

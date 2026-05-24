@@ -40,6 +40,26 @@ async function runKeepalive(env) {
     }
   }
 
+  if (env.RUN_MARKET_SCAN === "true") {
+    if (!env.CRON_SECRET) {
+      results.push({
+        url: env.CRON_SCAN_URL,
+        ok: false,
+        status: 0,
+        body: "CRON_SECRET is required when RUN_MARKET_SCAN=true",
+        checkedAt: new Date().toISOString(),
+      });
+    } else {
+      results.push(await requestJson(env.CRON_SCAN_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-cron-secret": env.CRON_SECRET,
+        },
+      }));
+    }
+  }
+
   return results;
 }
 

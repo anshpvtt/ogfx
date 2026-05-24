@@ -4,9 +4,11 @@ compatibility_date = "2026-05-24"
 workers_dev = false
 
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/5 * * * *"]
 
 [vars]
 RENDER_HEALTH_URL = "https://ogfx-render-agent-free.onrender.com/health"
 AGENT_TICK_URL = "https://ogfx-render-agent-free.onrender.com/agent/tick"
+CRON_SCAN_URL = "https://ogfx-render-agent-free.onrender.com/api/cron/scan-market"
 RUN_AGENT_TICK = "false"
+RUN_MARKET_SCAN = "true"

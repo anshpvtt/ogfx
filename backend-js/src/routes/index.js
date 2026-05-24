@@ -5,6 +5,7 @@ import { analyzeRoutes } from "./analyze.js";
 import { healthRoutes } from "./health.js";
 import { backtestRoutes } from "./backtest.js";
 import { agentRoutes } from "./agent.js";
+import { apiRoutes } from "./api.js";
 
 export async function setupRoutes(fastify) {
   fastify.get("/", async () => ({
@@ -35,4 +36,7 @@ export async function setupRoutes(fastify) {
 
   // Backtest routes (Supabase persistence)
   await fastify.register(backtestRoutes, { prefix: "/" });
+
+  // Production dashboard API contract
+  await fastify.register(apiRoutes, { prefix: "/" });
 }
