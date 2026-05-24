@@ -7,6 +7,14 @@ import { backtestRoutes } from "./backtest.js";
 import { agentRoutes } from "./agent.js";
 
 export async function setupRoutes(fastify) {
+  fastify.get("/", async () => ({
+    service: "ogfx-render-agent",
+    status: "online",
+    health: "/health",
+    docs: "/docs",
+    agent: "/agent/status",
+  }));
+
   // Health check (no auth required)
   await fastify.register(healthRoutes, { prefix: "/health" });
 
