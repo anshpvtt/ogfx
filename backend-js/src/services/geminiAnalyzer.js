@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -37,6 +38,14 @@ function apiKey() {
   );
 }
 
+function openRouterApiKey() {
+  return process.env.OPENROUTER_API_KEY || "";
+}
+
+function openRouterModel() {
+  return process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+}
+
 function stripModelName(model) {
   return String(model || "").replace(/^models\//, "");
 }
@@ -68,6 +77,34 @@ function toImageParts(body = {}) {
   });
 }
 
+function toOpenRouterImageParts(body = {}) {
+  const sources = Array.isArray(body.images)
+    ? body.images
+    : [body.imageDataUrl || body.imageBase64].filter(Boolean);
+
+  return sources.flatMap((source) => {
+    if (!source) return [];
+    if (typeof source === "object" && source.data) {
+      const mimeType = String(source.mimeType || source.mime_type || "image/png");
+      const raw = String(source.data);
+      return [{
+        type: "image_url",
+        image_url: {
+          url: raw.startsWith("data:") ? raw : `data:${mimeType};base64,${raw.replace(/^data:[^;]+;base64,/, "")}`,
+        },
+      }];
+    }
+
+    const value = String(source);
+    return [{
+      type: "image_url",
+      image_url: {
+        url: value.startsWith("data:") ? value : `data:${body.imageMimeType || "image/png"};base64,${value}`,
+      },
+    }];
+  });
+}
+
 function parseJson(text) {
   const cleaned = String(text || "{}")
     .replace(/^```json\s*/i, "")
@@ -85,7 +122,7 @@ function parseJson(text) {
   }
 }
 
-function coerceDecision(value, model) {
+function coerceDecision(value, model, mode = "gemini") {
   const decision = value?.decision === "BUY" || value?.decision === "SELL" || value?.decision === "WAIT"
     ? value.decision
     : "WAIT";
@@ -102,7 +139,7 @@ function coerceDecision(value, model) {
     reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 6).map(String) : ["Insufficient confluence"],
     invalidation: String(value?.invalidation || "Invalid if price closes beyond the protected liquidity extreme."),
     model,
-    mode: "gemini",
+    mode,
   };
 }
 
@@ -203,11 +240,11 @@ export class GeminiAnalyzer {
   }
 
   async analyze(body = {}) {
+    const openRouterKey = openRouterApiKey();
     const key = apiKey();
-    if (!key) throw new Error("GEMINI_API_KEY is required");
+    if (!openRouterKey && !key) throw new Error("OPENROUTER_API_KEY or GEMINI_API_KEY is required");
 
     const imageParts = toImageParts(body);
-    const model = await this.resolveModel(imageParts.length > 0);
     const datasets = await this.datasets();
     const prompt = [
       "You are OGFX Agent, a demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
@@ -223,6 +260,42 @@ export class GeminiAnalyzer {
       `Required OGFX datasets and PDF strategy logic: ${JSON.stringify(datasets).slice(0, 11000)}`,
     ].join("\n\n");
 
+    if (openRouterKey) {
+      const model = openRouterModel();
+      const response = await fetch(OPENROUTER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
+          "X-Title": "OGFX Elite SMC Trading Engine",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{
+            role: "user",
+            content: [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)],
+          }],
+          temperature: 0.1,
+          max_tokens: 800,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      const raw = await response.text();
+      if (!response.ok) {
+        throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+      }
+
+      const payload = JSON.parse(raw || "{}");
+      const content = payload?.choices?.[0]?.message?.content;
+      const text = Array.isArray(content)
+        ? content.map((part) => part?.text || "").join("")
+        : String(content || "{}");
+      return coerceDecision(parseJson(text), model, "openrouter");
+    }
+
+    const model = await this.resolveModel(imageParts.length > 0);
     const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: {
@@ -245,6 +318,6 @@ export class GeminiAnalyzer {
 
     const payload = JSON.parse(raw || "{}");
     const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join("") ?? "{}";
-    return coerceDecision(parseJson(text), model);
+    return coerceDecision(parseJson(text), model, "gemini");
   }
 }

@@ -90,7 +90,7 @@ export default function AnalyzePage() {
           success: true,
           symbol: backendSymbol,
           timeframe: timeframe.backend,
-          provider: decision?.mode === "gemma" ? decision.model : "local-demo",
+          provider: decision?.mode === "local-demo" ? "local-demo" : decision?.model,
           market: snapshot,
           playbook: {
             grade: decision?.confidence >= 75 ? "A" : decision?.confidence >= 60 ? "B" : "C",
@@ -105,7 +105,7 @@ export default function AnalyzePage() {
               riskReward: decision?.riskReward,
             },
             checklist: [
-              { label: "Gemma model response", passed: decision?.mode === "gemma" },
+              { label: "AI model response", passed: decision?.mode !== "local-demo" },
               { label: "OGFX dataset logic included", passed: true },
               { label: "TP/SL defined", passed: Boolean(decision?.stopLoss && decision?.takeProfit) },
               { label: "Trade bias selected", passed: decision?.decision !== "WAIT" },

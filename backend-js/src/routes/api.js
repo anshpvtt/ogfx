@@ -4,6 +4,7 @@ import { logger } from "../services/logger.js";
 import { runSMCAnalysis, runSMCBacktest } from "../engine/smc/simpleSmc.js";
 
 const SCAN_SYMBOLS = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "NAS100", "SPX500"];
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 function hasSupabaseEnv() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -105,6 +106,58 @@ function parseGemmaJson(text) {
 }
 
 async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    const model = process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+    const prompt = [
+      "You are OGFX Agent, an elite but demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
+      "Use the OGFX strategy: order blocks, BOS/MSS/CHOCH, fair value gaps, liquidity sweeps, HTF bias, TP/SL discipline, and risk preservation.",
+      "Return JSON only with keys: confirmed, direction, confidence, reason, entry, sl, tp.",
+      "Allowed direction values are BUY, SELL, WAIT. Confirm true only when confidence is at least 70 and TP/SL are valid.",
+      `Symbol: ${symbol}`,
+      `OHLCV data: ${JSON.stringify(ohlcvData.slice(-80))}`,
+      `Local SMC engine result: ${JSON.stringify(analysis)}`,
+    ].join("\n\n");
+
+    const response = await fetch(OPENROUTER_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openRouterKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
+        "X-Title": "OGFX Elite SMC Trading Engine",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+        temperature: 0.1,
+        max_tokens: 700,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+    const payload = JSON.parse(raw || "{}");
+    const content = payload?.choices?.[0]?.message?.content;
+    const text = Array.isArray(content)
+      ? content.map((part) => part?.text || "").join("")
+      : String(content || "{}");
+    const parsed = parseGemmaJson(text);
+    return {
+      confirmed: Boolean(parsed.confirmed),
+      direction: parsed.direction === "BUY" || parsed.direction === "SELL" ? parsed.direction : analysis.direction || "WAIT",
+      confidence: Math.max(0, Math.min(100, numeric(parsed.confidence, analysis.confidence || 0))),
+      reason: String(parsed.reason || analysis.reason || "OpenRouter Gemma SMC confluence check complete"),
+      entry: numeric(parsed.entry, analysis.entry),
+      sl: numeric(parsed.sl, analysis.sl),
+      tp: numeric(parsed.tp, analysis.tp),
+      model,
+      provider: "openrouter",
+      fallback: false,
+    };
+  }
+
   const key = process.env.GEMMA_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   if (!key) {
     return {

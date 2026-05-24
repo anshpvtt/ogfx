@@ -15,10 +15,11 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "local-demo";
+  mode: "gemma" | "openrouter" | "local-demo";
 };
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 async function readJson(relativePath: string) {
   const root = path.basename(process.cwd()) === "frontend" ? path.resolve(process.cwd(), "..") : process.cwd();
@@ -47,13 +48,21 @@ async function loadDatasets() {
   };
 }
 
-function getApiKey() {
+function getGeminiApiKey() {
   return (
     process.env.GEMINI_API_KEY ||
     process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
     process.env.GOOGLE_AI_API_KEY ||
     ""
   );
+}
+
+function getOpenRouterApiKey() {
+  return process.env.OPENROUTER_API_KEY || "";
+}
+
+function getOpenRouterModel() {
+  return process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
 }
 
 async function resolveGemmaModel(apiKey: string, needsVision = false) {
@@ -224,6 +233,75 @@ function toImageParts(body: any) {
   });
 }
 
+function toOpenRouterImageParts(body: any) {
+  const sources = Array.isArray(body?.images) ? body.images : [body?.imageDataUrl || body?.imageBase64].filter(Boolean);
+  return sources.flatMap((source: any) => {
+    if (!source) return [];
+    if (typeof source === "object" && source.data) {
+      const mimeType = String(source.mimeType || source.mime_type || "image/png");
+      const raw = String(source.data);
+      return [{
+        type: "image_url",
+        image_url: {
+          url: raw.startsWith("data:") ? raw : `data:${mimeType};base64,${raw.replace(/^data:[^;]+;base64,/, "")}`,
+        },
+      }];
+    }
+
+    const value = String(source);
+    return [{
+      type: "image_url",
+      image_url: {
+        url: value.startsWith("data:") ? value : `data:${body?.imageMimeType || "image/png"};base64,${value}`,
+      },
+    }];
+  });
+}
+
+async function callOpenRouter({
+  apiKey,
+  model,
+  prompt,
+  imageParts = [],
+}: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  imageParts?: Array<{ type: "image_url"; image_url: { url: string } }>;
+}) {
+  const response = await fetch(OPENROUTER_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "https://ogfx-frontend.vercel.app",
+      "X-Title": "OGFX Elite SMC Trading Engine",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: prompt }, ...imageParts],
+      }],
+      temperature: 0.1,
+      max_tokens: 700,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
+  }
+
+  const payload = JSON.parse(raw || "{}");
+  const content = payload?.choices?.[0]?.message?.content;
+  const text = Array.isArray(content)
+    ? content.map((part: any) => part?.text || "").join("")
+    : String(content || "{}");
+  return parseGemmaJson(text);
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const assetId = String(body?.assetId ?? "").toUpperCase();
@@ -234,9 +312,15 @@ export async function POST(request: NextRequest) {
   }
 
   const datasets = await loadDatasets();
-  const apiKey = getApiKey();
+  const openRouterApiKey = getOpenRouterApiKey();
+  const geminiApiKey = getGeminiApiKey();
   const imageParts = toImageParts(body);
-  const model = apiKey ? await resolveGemmaModel(apiKey, imageParts.length > 0) : "gemma-4";
+  const openRouterImageParts = toOpenRouterImageParts(body);
+  const model = openRouterApiKey
+    ? getOpenRouterModel()
+    : geminiApiKey
+      ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
+      : getOpenRouterModel();
   const requireGemma = Boolean(body.requireGemma);
 
   const prompt = [
@@ -253,10 +337,10 @@ export async function POST(request: NextRequest) {
     `Datasets: ${JSON.stringify(datasets).slice(0, 9000)}`,
   ].join("\n\n");
 
-  if (!apiKey) {
+  if (!openRouterApiKey && !geminiApiKey) {
     if (requireGemma) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY is required for production signal generation" },
+        { error: "OPENROUTER_API_KEY or GEMINI_API_KEY is required for production signal generation" },
         { status: 503 }
       );
     }
@@ -268,7 +352,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const rawDecision = await callGemma({ apiKey, model, prompt, imageParts });
+    if (openRouterApiKey) {
+      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model, prompt, imageParts: openRouterImageParts });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, model, "openrouter") });
+    }
+
+    const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
     return NextResponse.json({ decision: coerceDecision(rawDecision, model, "gemma") });
   } catch (error: any) {
     if (requireGemma) {

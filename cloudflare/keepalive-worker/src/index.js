@@ -52,6 +52,7 @@ async function runKeepalive(env) {
     } else {
       results.push(await requestJson(env.CRON_SCAN_URL, {
         method: "POST",
+        body: "{}",
         headers: {
           "content-type": "application/json",
           "x-cron-secret": env.CRON_SECRET,
