@@ -85,7 +85,9 @@ export async function fetchYahooCandles({
       close: Number(quote.close?.[index]),
       volume: Number(quote.volume?.[index] ?? 0),
     }))
-    .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
+    .filter((candle) =>
+      [candle.open, candle.high, candle.low, candle.close].every((value) => Number.isFinite(value) && value > 0)
+    );
 
   return normalizedTimeframe === "4H" ? aggregateCandles(candles, 4) : candles;
 }
