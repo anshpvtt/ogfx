@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getTradingAsset } from "@/lib/assets";
-import { ensureDemoAccount, orderMargin, recalculateDemoAccount } from "@/lib/demo-trading";
+import { ensureDemoAccount, ensureDemoSettings, orderMargin, recalculateDemoAccount } from "@/lib/demo-trading";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function validateLevels(side: "BUY" | "SELL", entry: number, stopLoss: number, takeProfit: number) {
@@ -39,7 +39,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const account = await ensureDemoAccount(supabase, user.id);
-    const requiredMargin = orderMargin({ entry, size });
+    const settings = await ensureDemoSettings(supabase, user.id);
+    const requiredMargin = orderMargin({ asset_id: asset.id, entry, size }, Number(settings?.leverage ?? 100));
     if (Number(account.free_margin ?? account.balance ?? 0) < requiredMargin) {
       return NextResponse.json({ error: "Insufficient demo free margin" }, { status: 422 });
     }

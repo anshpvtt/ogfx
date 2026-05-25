@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { fetchMarketSnapshot, orderMargin, recalculateDemoAccount, type DemoOrderSide } from "@/lib/demo-trading";
+import { ensureDemoSettings, orderMargin, recalculateDemoAccount, type DemoOrderSide } from "@/lib/demo-trading";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function validateLevels(side: DemoOrderSide, entry: number, stopLoss: number, takeProfit: number) {
@@ -62,7 +62,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         .maybeSingle();
 
       if (accountError) throw new Error(accountError.message);
-      const requiredMargin = orderMargin({ entry, size });
+      const settings = await ensureDemoSettings(supabase, user.id);
+      const requiredMargin = orderMargin({ asset_id: assetId, entry, size }, Number(settings?.leverage ?? 100));
       if (Number(account?.free_margin ?? account?.balance ?? 0) < requiredMargin) {
         return NextResponse.json({ error: "Insufficient demo free margin" }, { status: 422 });
       }
@@ -92,15 +93,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       .single();
 
     if (updateError) throw new Error(updateError.message);
-    const snapshots = {} as Record<string, Awaited<ReturnType<typeof fetchMarketSnapshot>>>;
-    if (!isPending && assetId) {
-      try {
-        snapshots[assetId] = await fetchMarketSnapshot(assetId, "1H");
-      } catch {
-        // A level edit should still succeed if the quote provider is briefly unavailable.
-      }
-    }
-    const account = await recalculateDemoAccount(supabase, user.id, snapshots);
+    const account = await recalculateDemoAccount(supabase, user.id);
 
     return NextResponse.json({ order: updatedOrder, account });
   } catch (error: any) {

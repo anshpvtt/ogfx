@@ -2,6 +2,12 @@ import { BACKTEST_TIMEFRAMES, TRADING_ASSETS, getTradingAsset } from "@/lib/asse
 import { fetchYahooCandles } from "@/lib/market-data";
 import type { Candle } from "@/lib/smc-engine";
 import type { StrategyCatalogItem } from "@/lib/strategy-catalog";
+import {
+  orderMargin as computeOrderMargin,
+  orderPnl as computeOrderPnl,
+  normalizeLeverage,
+  type TradeSide,
+} from "@/lib/trade-math";
 
 export type DemoOrderStatus = "OPEN" | "PENDING" | "TP" | "SL" | "CLOSED";
 export type DemoOrderSide = "BUY" | "SELL";
@@ -138,13 +144,29 @@ export async function fetchMarketSnapshot(assetId: string, timeframe = "1H") {
   return snapshotFromCandles(assetId, normalizedTimeframe, candles);
 }
 
-export function orderPnl(order: Pick<DemoOrderRow, "entry" | "side" | "size">, exitPrice: number) {
-  const direction = order.side === "BUY" ? 1 : -1;
-  return Number(((exitPrice - Number(order.entry)) * direction * Number(order.size)).toFixed(2));
+export function orderPnl(
+  order: Pick<DemoOrderRow, "entry" | "side" | "size"> & { asset_id?: string | null; symbol?: string | null },
+  exitPrice: number
+) {
+  return computeOrderPnl({
+    assetId: order.asset_id ?? order.symbol,
+    entry: Number(order.entry),
+    side: order.side as TradeSide,
+    size: Number(order.size),
+    exitPrice: Number(exitPrice),
+  });
 }
 
-export function orderMargin(order: Pick<DemoOrderRow, "entry" | "size">) {
-  return Number(Math.max(1, Math.abs(Number(order.entry) * Number(order.size)) * 0.01).toFixed(2));
+export function orderMargin(
+  order: Pick<DemoOrderRow, "entry" | "size"> & { asset_id?: string | null; symbol?: string | null },
+  leverage?: number | null
+) {
+  return computeOrderMargin({
+    assetId: order.asset_id ?? order.symbol,
+    entry: Number(order.entry),
+    size: Number(order.size),
+    leverage,
+  });
 }
 
 export function evaluateDemoDecision(
@@ -287,6 +309,8 @@ export async function recalculateDemoAccount(
   snapshots: Record<string, DemoMarketSnapshot> = {}
 ) {
   const account = await ensureDemoAccount(client, userId);
+  const settings = await ensureDemoSettings(client, userId);
+  const leverage = normalizeLeverage(settings?.leverage, null);
   const { data: openOrders, error } = await client
     .from("demo_orders")
     .select("*")
@@ -298,7 +322,7 @@ export async function recalculateDemoAccount(
   let margin = 0;
   let unrealizedPnl = 0;
   for (const order of (openOrders ?? []) as DemoOrderRow[]) {
-    margin += orderMargin(order);
+    margin += orderMargin(order, leverage);
     const latest = snapshots[order.asset_id]?.latest?.close;
     if (latest) unrealizedPnl += orderPnl(order, latest);
   }
@@ -332,6 +356,7 @@ export async function recalculateDemoAccount(
       margin: Number(margin.toFixed(2)),
       free_margin: freeMargin,
       margin_level: marginLevel,
+      leverage,
       updated_at: updatedAt,
     }, { onConflict: "user_id" });
   return data;

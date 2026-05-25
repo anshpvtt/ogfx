@@ -84,6 +84,7 @@ export default function OnboardingPage() {
         equity: balance,
         free_margin: balance,
         margin: 0,
+        leverage: 100,
         risk_per_trade: riskPercent / 100,
         watched_assets: pairs.length ? pairs : ["XAUUSD"],
         updated_at: now,

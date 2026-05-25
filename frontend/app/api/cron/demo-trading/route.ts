@@ -160,7 +160,10 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        const requiredMargin = orderMargin({ entry: decision.entry, size: defaultSize });
+        const requiredMargin = orderMargin(
+          { asset_id: asset.id, entry: decision.entry, size: defaultSize },
+          Number(setting.leverage ?? 100)
+        );
         if (Number(account?.free_margin ?? account?.balance ?? 0) < requiredMargin) continue;
 
         const { data: order, error: insertError } = await admin

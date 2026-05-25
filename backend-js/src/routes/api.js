@@ -2,6 +2,7 @@ import { fetchYahooCandles, normalizeTimeframe } from "../services/yahooFeed.js"
 import { getSupabaseAdmin } from "../services/supabase.js";
 import { logger } from "../services/logger.js";
 import { runSMCAnalysis, runSMCBacktest } from "../engine/smc/simpleSmc.js";
+import { orderMargin as computeOrderMargin, orderPnl as computeOrderPnl } from "../services/tradeMath.js";
 
 const SCAN_SYMBOLS = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "NAS100", "SPX500"];
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
@@ -77,15 +78,18 @@ function normalizeOrder(row) {
   };
 }
 
-function orderMargin({ lotSize, entry, symbol }) {
-  const rate = String(symbol).includes("XAU") ? 0.01 : 0.01;
-  return Math.max(1, Math.abs(Number(lotSize || 1) * Number(entry || 0) * rate));
+function orderMargin({ lotSize, entry, symbol, leverage }) {
+  return computeOrderMargin({ assetId: symbol, entry, size: lotSize, leverage });
 }
 
 function orderPnl(order, closePrice) {
-  const direction = directionOf(order) === "BUY" ? 1 : -1;
-  const entry = entryOf(order);
-  return Number(((Number(closePrice) - entry) * direction * lotSizeOf(order)).toFixed(2));
+  return computeOrderPnl({
+    assetId: symbolOf(order),
+    entry: entryOf(order),
+    side: directionOf(order),
+    size: lotSizeOf(order),
+    exitPrice: Number(closePrice),
+  });
 }
 
 function fallbackAccount(userId, balance = 10000) {
@@ -330,13 +334,20 @@ async function recalculateAccount(supabase, userId) {
     .eq("user_id", userId);
   if (error) throw new Error(error.message);
 
-  const openOrders = (orders || []).filter((order) => ["open", "pending", "OPEN"].includes(String(order.status)));
+  const openOrders = (orders || []).filter((order) => ["open", "pending", "OPEN", "PENDING"].includes(String(order.status)));
   const closedOrders = (orders || []).filter((order) => ["closed", "CLOSED", "TP", "SL"].includes(String(order.status)));
   const realized = closedOrders.reduce((sum, order) => sum + numeric(order.pnl, 0), 0);
+  const { data: settings } = await supabase
+    .from("demo_account_settings")
+    .select("leverage")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const leverage = numeric(settings?.leverage, 100);
   const margin = openOrders.reduce((sum, order) => sum + orderMargin({
     lotSize: lotSizeOf(order),
     entry: entryOf(order),
     symbol: symbolOf(order),
+    leverage,
   }), 0);
   const initial = numeric(account.initial_balance, 10000);
   const balance = Number((initial + realized).toFixed(2));
@@ -453,7 +464,12 @@ async function placeDemoOrder(supabase, body) {
   }
 
   const account = await ensureAccount(supabase, userId);
-  const margin = orderMargin({ lotSize, entry, symbol });
+  const { data: settings } = await supabase
+    .from("demo_account_settings")
+    .select("leverage")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const margin = orderMargin({ lotSize, entry, symbol, leverage: numeric(settings?.leverage, 100) });
   if (numeric(account.free_margin, 0) < margin) {
     const error = new Error("Insufficient free margin");
     error.statusCode = 400;

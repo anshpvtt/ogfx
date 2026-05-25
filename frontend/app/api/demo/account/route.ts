@@ -96,6 +96,7 @@ export async function PATCH(request: NextRequest) {
 
     if (error) throw new Error(error.message);
     const account = await recalculateDemoAccount(supabase, user.id);
+    const settings = await ensureDemoSettings(supabase, user.id);
     await supabase
       .from("demo_account_settings")
       .upsert({
@@ -105,6 +106,7 @@ export async function PATCH(request: NextRequest) {
         margin: account?.margin ?? 0,
         free_margin: account?.free_margin ?? initialBalance,
         margin_level: account?.margin_level ?? null,
+        leverage: settings?.leverage ?? 100,
         updated_at: now,
       }, { onConflict: "user_id" });
 

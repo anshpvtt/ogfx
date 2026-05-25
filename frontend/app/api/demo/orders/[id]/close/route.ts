@@ -53,8 +53,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       return NextResponse.json({ closed: { id: order.id, pnl: 0, closedAt, exitPrice: null }, account });
     }
 
-    const snapshot = await fetchMarketSnapshot(normalizedOrder.asset_id, "1H");
-    const exitPrice = Number(body?.exitPrice ?? snapshot.latest?.close ?? normalizedOrder.entry);
+    const providedExitPrice = Number(body?.exitPrice);
+    const snapshot = Number.isFinite(providedExitPrice) ? null : await fetchMarketSnapshot(normalizedOrder.asset_id, "1H");
+    const exitPrice = Number(Number.isFinite(providedExitPrice) ? providedExitPrice : snapshot?.latest?.close ?? normalizedOrder.entry);
     if (!Number.isFinite(exitPrice)) {
       return NextResponse.json({ error: "No valid exit price available" }, { status: 422 });
     }
@@ -69,7 +70,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       const closedAt = new Date().toISOString();
       const closedSize = Number(requestedCloseSize.toFixed(4));
       const remainingSize = Number((orderSize - closedSize).toFixed(4));
-      const pnl = orderPnl({ entry: normalizedOrder.entry, side: normalizedOrder.side, size: closedSize }, exitPrice);
+      const pnl = orderPnl({
+        asset_id: normalizedOrder.asset_id,
+        entry: normalizedOrder.entry,
+        side: normalizedOrder.side,
+        size: closedSize,
+      }, exitPrice);
 
       const { error: updateError } = await supabase
         .from("demo_orders")
@@ -102,7 +108,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
           .eq("user_id", user.id);
       }
 
-      const accountAfterPartial = await recalculateDemoAccount(supabase, user.id, { [normalizedOrder.asset_id]: snapshot });
+      const snapshots = snapshot ? { [normalizedOrder.asset_id]: snapshot } : {};
+      const accountAfterPartial = await recalculateDemoAccount(supabase, user.id, snapshots);
       return NextResponse.json({
         closed: { id: order.id, partial: true, closedSize, remainingSize, pnl, closedAt, exitPrice },
         account: accountAfterPartial,
@@ -110,7 +117,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
 
     const result = await closeDemoOrder(supabase, normalizedOrder, exitPrice, "CLOSED");
-    const account = await recalculateDemoAccount(supabase, user.id, { [normalizedOrder.asset_id]: snapshot });
+    const snapshots = snapshot ? { [normalizedOrder.asset_id]: snapshot } : {};
+    const account = await recalculateDemoAccount(supabase, user.id, snapshots);
 
     return NextResponse.json({ closed: { id: order.id, ...result, exitPrice }, account });
   } catch (error: any) {

@@ -28,6 +28,7 @@ export default function DashboardSettingsPage() {
   const [startingBalance, setStartingBalance] = useState(10000);
   const [riskPerTrade, setRiskPerTrade] = useState(1);
   const [defaultSize, setDefaultSize] = useState(1);
+  const [leverage, setLeverage] = useState(100);
 
   async function load() {
     const { data } = await supabase.auth.getUser();
@@ -48,6 +49,7 @@ export default function DashboardSettingsPage() {
     setStartingBalance(Number(settingsRow?.balance ?? profileRow?.demo_balance ?? 10000));
     setRiskPerTrade(Number(profileRow?.risk_percent ?? (Number(settingsRow?.risk_per_trade ?? 0.01) * 100)));
     setDefaultSize(Number(settingsRow?.default_size ?? 1));
+    setLeverage(Number(settingsRow?.leverage ?? 100));
   }
 
   useEffect(() => {
@@ -123,6 +125,7 @@ export default function DashboardSettingsPage() {
         riskPerTrade: riskPerTrade / 100,
         maxOpenTrades: Number(settings?.max_open_trades ?? 5),
         defaultSize,
+        leverage,
         watchedAssets: settings?.watched_assets ?? ["XAUUSD", "EURUSD"],
       }),
     });
@@ -226,11 +229,12 @@ export default function DashboardSettingsPage() {
       {tab === "demo" && (
         <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
           <CardHeader><CardTitle className="flex items-center gap-2 text-white"><Shield className="h-4 w-4 text-emerald-200" /> Demo account</CardTitle></CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-3">
+          <CardContent className="grid gap-4 md:grid-cols-4">
             <label className="text-sm text-slate-400">Balance<input type="number" value={startingBalance} onChange={(event) => setStartingBalance(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
             <label className="text-sm text-slate-400">Risk %<input type="number" min="0.1" max="5" step="0.1" value={riskPerTrade} onChange={(event) => setRiskPerTrade(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
             <label className="text-sm text-slate-400">Default lot size<input type="number" min="0.01" step="0.01" value={defaultSize} onChange={(event) => setDefaultSize(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
-            <div className="md:col-span-3"><Button onClick={saveDemo} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">Save demo account</Button></div>
+            <label className="text-sm text-slate-400">Leverage<select value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white">{[20, 50, 100, 200, 500, 1000].map((value) => <option key={value} value={value}>1:{value}</option>)}</select></label>
+            <div className="md:col-span-4"><Button onClick={saveDemo} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">Save demo account</Button></div>
           </CardContent>
         </Card>
       )}

@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
         const snapshot = snapshotFromCandles(pair, timeframe, candles);
         const { data: settings } = await supabase
           .from("demo_account_settings")
-          .select("auto_trading_enabled,balance,equity,free_margin,default_size,risk_per_trade,max_open_trades,watched_assets")
+          .select("auto_trading_enabled,balance,equity,free_margin,default_size,risk_per_trade,max_open_trades,watched_assets,leverage")
           .eq("user_id", profile.id)
           .maybeSingle();
         const message = [
@@ -163,7 +163,7 @@ export async function GET(request: NextRequest) {
           analysis.take_profit
         ) {
           const size = Number(settings.default_size || 1);
-          const margin = orderMargin({ entry: analysis.entry, size });
+          const margin = orderMargin({ asset_id: pair, entry: analysis.entry, size }, Number(settings.leverage ?? 100));
           if (Number(settings.free_margin ?? settings.balance ?? 0) >= margin) {
             const { data: order } = await supabase
               .from("demo_orders")

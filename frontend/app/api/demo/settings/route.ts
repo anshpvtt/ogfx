@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { defaultWatchedAssets, ensureDemoSettings } from "@/lib/demo-trading";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { normalizeLeverage } from "@/lib/trade-math";
 
 async function getUserOrResponse() {
   const supabase = await createSupabaseServerClient();
@@ -23,7 +24,7 @@ export async function GET() {
 
   try {
     const settings = await ensureDemoSettings(supabase, user.id);
-    return NextResponse.json({ settings });
+    return NextResponse.json({ settings: { ...settings, leverage: normalizeLeverage(settings?.leverage, null) } });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Failed to load demo settings" }, { status: 500 });
   }
@@ -39,6 +40,7 @@ export async function PATCH(request: NextRequest) {
   const riskPerTrade = Number(body?.riskPerTrade ?? 0.01);
   const maxOpenTrades = Number(body?.maxOpenTrades ?? 5);
   const defaultSize = Number(body?.defaultSize ?? 1);
+  const leverage = normalizeLeverage(body?.leverage, null);
   const watchedAssets = defaultWatchedAssets(body?.watchedAssets);
 
   if (autoTradingEnabled) {
@@ -72,6 +74,7 @@ export async function PATCH(request: NextRequest) {
         risk_per_trade: riskPerTrade,
         max_open_trades: maxOpenTrades,
         default_size: defaultSize,
+        leverage,
         watched_assets: watchedAssets,
         updated_at: new Date().toISOString(),
       })

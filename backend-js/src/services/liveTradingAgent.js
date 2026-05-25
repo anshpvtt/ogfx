@@ -1,6 +1,7 @@
 import { GeminiAnalyzer } from "./geminiAnalyzer.js";
 import { getSupabaseAdmin } from "./supabase.js";
 import { logger } from "./logger.js";
+import { orderMargin, orderPnl as computeOrderPnl } from "./tradeMath.js";
 
 const DEFAULT_ASSETS = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "ETHUSD", "USOIL", "NAS100", "SPX500"];
 const DEFAULT_TIMEFRAMES = ["15m", "1h"];
@@ -17,13 +18,14 @@ function confidenceLabel(value) {
   return "LOW";
 }
 
-function orderMargin({ entry, size }) {
-  return Math.abs(Number(entry || 0) * Number(size || 1)) * 0.02;
-}
-
 function orderPnl(order, price) {
-  const direction = order.side === "BUY" ? 1 : -1;
-  return (Number(price) - Number(order.entry)) * direction * Number(order.size || 1);
+  return computeOrderPnl({
+    assetId: order.asset_id || order.symbol || order.pair,
+    entry: Number(order.entry ?? order.entry_price),
+    side: order.side || order.direction,
+    size: Number(order.size ?? order.lot_size ?? 1),
+    exitPrice: Number(price),
+  });
 }
 
 function normalizedSignal(decision, assetId, timeframe, userId = null, confirmationType = "GEMINI_RENDER_AGENT") {
@@ -259,7 +261,7 @@ export class LiveTradingAgent {
 
     const account = await this.ensureAccount(supabase, setting.user_id);
     const size = Number(setting.default_size ?? 1);
-    const margin = orderMargin({ entry: decision.entry, size });
+    const margin = orderMargin({ assetId, entry: decision.entry, size, leverage: setting.leverage ?? 100 });
     if (Number(account.free_margin ?? account.balance ?? 0) < margin) return false;
 
     const { error } = await supabase.from("demo_orders").insert({
@@ -267,9 +269,11 @@ export class LiveTradingAgent {
       asset_id: assetId,
       side: decision.decision,
       entry: decision.entry,
+      entry_price: decision.entry,
       stop_loss: decision.stopLoss,
       take_profit: decision.takeProfit,
       size,
+      lot_size: size,
       status: "OPEN",
       source: "agent-cron",
       confidence: decision.confidence,
@@ -300,7 +304,7 @@ export class LiveTradingAgent {
   }
 
   async syncOpenOrders(supabase) {
-    const { data: orders, error } = await supabase.from("demo_orders").select("*").eq("status", "OPEN");
+    const { data: orders, error } = await supabase.from("demo_orders").select("*").in("status", ["OPEN", "open"]);
     if (error) throw new Error(error.message);
 
     const byUser = new Set();
@@ -349,11 +353,22 @@ export class LiveTradingAgent {
     let realizedPnl = 0;
     let floatingPnl = 0;
     let margin = 0;
+    const { data: setting } = await supabase
+      .from("demo_account_settings")
+      .select("leverage")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const leverage = setting?.leverage ?? 100;
     for (const order of orders ?? []) {
-      if (order.status === "OPEN") {
+      if (["OPEN", "open"].includes(String(order.status))) {
         const market = await this.signalEngine.marketData.fetchData(order.asset_id, { timeframe: "15m", limit: 80 });
         floatingPnl += orderPnl(order, Number(market.close));
-        margin += orderMargin({ entry: order.entry, size: order.size });
+        margin += orderMargin({
+          assetId: order.asset_id || order.symbol || order.pair,
+          entry: order.entry ?? order.entry_price,
+          size: order.size ?? order.lot_size,
+          leverage,
+        });
       } else {
         realizedPnl += Number(order.pnl ?? 0);
       }
