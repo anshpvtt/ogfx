@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   const { data: openOrders, error } = await supabase
     .from("demo_orders")
     .select("user_id")
-    .in("status", ["OPEN", "open"]);
+    .in("status", ["OPEN", "open", "pending", "PENDING"]);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

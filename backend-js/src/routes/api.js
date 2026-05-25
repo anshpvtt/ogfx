@@ -4,8 +4,7 @@ import { logger } from "../services/logger.js";
 import { runSMCAnalysis, runSMCBacktest } from "../engine/smc/simpleSmc.js";
 
 const SCAN_SYMBOLS = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "NAS100", "SPX500"];
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
+const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 
 function hasSupabaseEnv() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -138,90 +137,67 @@ function parseGemmaJson(text) {
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+  const normalizeParsed = (parsed) => Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
 
   try {
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    return normalizeParsed(JSON.parse(cleaned));
   } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(cleaned.slice(start, end + 1));
-      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    const fenced = [...cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+    for (let index = fenced.length - 1; index >= 0; index -= 1) {
+      try {
+        return normalizeParsed(JSON.parse(fenced[index]?.[1]?.trim() || "{}"));
+      } catch {
+        // Keep searching below.
+      }
     }
-    throw new Error("Gemma returned non-JSON content");
+
+    const parsedObjects = [];
+    for (let start = 0; start < cleaned.length; start += 1) {
+      if (cleaned[start] !== "{") continue;
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const char = cleaned[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === "\"") inString = false;
+          continue;
+        }
+        if (char === "\"") inString = true;
+        else if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              parsedObjects.push(normalizeParsed(JSON.parse(cleaned.slice(start, index + 1))));
+              start = index;
+            } catch {
+              // Ignore non-JSON brace blocks in model commentary.
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (parsedObjects.length) {
+      return parsedObjects[parsedObjects.length - 1];
+    }
+    throw new Error("Google AI returned non-JSON content");
   }
 }
 
 function friendlyAiError(error) {
   const message = String(error?.message || error || "AI provider unavailable");
-  if (/free-models-per-day/i.test(message)) {
-    return "OpenRouter free model daily limit reached for this account. OGFX local SMC fallback is active until quota resets or credits are added.";
-  }
-  if (/subscription|upgrade/i.test(message)) {
-    return "Selected AI model requires a paid subscription. OGFX is using the next free provider or local SMC fallback.";
-  }
   if (/unauthorized|401|403/i.test(message)) {
     return "AI provider rejected the API key. Check the server-side key value; OGFX local SMC fallback is active.";
   }
-  if (/429|rate.?limit|temporarily/i.test(message)) {
+  if (/429|rate.?limit|temporarily|quota/i.test(message)) {
     return "AI provider is temporarily rate-limited. OGFX local SMC fallback is active.";
   }
   return message.length > 220 ? `${message.slice(0, 217)}...` : message;
-}
-
-async function callOllamaConfirmation({ apiKey, model, symbol, ohlcvData, analysis }) {
-  const prompt = [
-    "You are OGFX Agent, an elite but demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
-    "Use the OGFX strategy: order blocks, BOS/MSS/CHOCH, fair value gaps, liquidity sweeps, HTF bias, TP/SL discipline, and risk preservation.",
-    "Return JSON only with keys: confirmed, direction, confidence, reason, entry, sl, tp.",
-    "Allowed direction values are BUY, SELL, WAIT. Confirm true only when confidence is at least 70 and TP/SL are valid.",
-    `Symbol: ${symbol}`,
-    `OHLCV data: ${JSON.stringify(ohlcvData.slice(-80))}`,
-    `Local SMC engine result: ${JSON.stringify(analysis)}`,
-  ].join("\n\n");
-
-  const response = await fetch(OLLAMA_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-      format: "json",
-      options: {
-        temperature: 0.1,
-        num_predict: 700,
-      },
-    }),
-  });
-
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
-  const payload = JSON.parse(raw || "{}");
-  const parsed = parseGemmaJson(payload?.message?.content ?? payload?.response ?? "{}");
-  const direction = parsed.direction === "BUY" || parsed.decision === "BUY"
-    ? "BUY"
-    : parsed.direction === "SELL" || parsed.decision === "SELL"
-      ? "SELL"
-      : analysis.direction || "WAIT";
-  const confidence = Math.max(0, Math.min(100, numeric(parsed.confidence, analysis.confidence || 0)));
-
-  return {
-    confirmed: Boolean(parsed.confirmed ?? (direction !== "WAIT" && confidence >= 70)),
-    direction,
-    confidence,
-    reason: String(parsed.reason || analysis.reason || "Ollama Gemma SMC confluence check complete"),
-    entry: numeric(parsed.entry, analysis.entry),
-    sl: numeric(parsed.sl, numeric(parsed.stopLoss, analysis.sl)),
-    tp: numeric(parsed.tp, numeric(parsed.takeProfit, analysis.tp)),
-    model,
-    provider: "ollama",
-    fallback: false,
-  };
 }
 
 async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
@@ -230,7 +206,7 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
       confirmed: false,
       direction: "WAIT",
       confidence: Number(analysis.confidence || 0),
-      reason: analysis.reason || "No local SMC setup; AI confirmation skipped to protect free quota.",
+      reason: analysis.reason || "No local SMC setup; Google AI confirmation skipped.",
       entry: analysis.entry,
       sl: analysis.sl,
       tp: analysis.tp,
@@ -241,72 +217,6 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
   }
 
   const providerErrors = [];
-  const ollamaKey = process.env.OLLAMA_API_KEY;
-  if (ollamaKey) {
-    const model = process.env.OLLAMA_MODEL || "gemma4:31b";
-    try {
-      return await callOllamaConfirmation({ apiKey: ollamaKey, model, symbol, ohlcvData, analysis });
-    } catch (error) {
-      providerErrors.push(friendlyAiError(error));
-    }
-  }
-
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (openRouterKey) {
-    const model = process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
-    const prompt = [
-      "You are OGFX Agent, an elite but demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
-      "Use the OGFX strategy: order blocks, BOS/MSS/CHOCH, fair value gaps, liquidity sweeps, HTF bias, TP/SL discipline, and risk preservation.",
-      "Return JSON only with keys: confirmed, direction, confidence, reason, entry, sl, tp.",
-      "Allowed direction values are BUY, SELL, WAIT. Confirm true only when confidence is at least 70 and TP/SL are valid.",
-      `Symbol: ${symbol}`,
-      `OHLCV data: ${JSON.stringify(ohlcvData.slice(-80))}`,
-      `Local SMC engine result: ${JSON.stringify(analysis)}`,
-    ].join("\n\n");
-
-    try {
-      const response = await fetch(OPENROUTER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${openRouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
-          "X-Title": "OGFX Elite SMC Trading Engine",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.1,
-          max_tokens: 700,
-          response_format: { type: "json_object" },
-        }),
-      });
-
-      const raw = await response.text();
-      if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
-      const payload = JSON.parse(raw || "{}");
-      const content = payload?.choices?.[0]?.message?.content;
-      const text = Array.isArray(content)
-        ? content.map((part) => part?.text || "").join("")
-        : String(content || "{}");
-      const parsed = parseGemmaJson(text);
-      return {
-        confirmed: Boolean(parsed.confirmed),
-        direction: parsed.direction === "BUY" || parsed.direction === "SELL" ? parsed.direction : analysis.direction || "WAIT",
-        confidence: Math.max(0, Math.min(100, numeric(parsed.confidence, analysis.confidence || 0))),
-        reason: String(parsed.reason || analysis.reason || "OpenRouter Gemma SMC confluence check complete"),
-        entry: numeric(parsed.entry, analysis.entry),
-        sl: numeric(parsed.sl, analysis.sl),
-        tp: numeric(parsed.tp, analysis.tp),
-        model,
-        provider: "openrouter",
-        fallback: false,
-      };
-    } catch (error) {
-      providerErrors.push(friendlyAiError(error));
-    }
-  }
-
   const key = process.env.GEMMA_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   if (!key) {
     return {
@@ -322,26 +232,40 @@ async function callGemmaConfirmation({ symbol, ohlcvData, analysis }) {
     };
   }
 
-  const model = (process.env.GEMMA_MODEL || "gemma-3-27b-it").replace(/^models\//, "");
+  const model = (
+    process.env.GEMMA_MODEL ||
+    process.env.GEMINI_MODEL ||
+    process.env.GOOGLE_GEMINI_MODEL ||
+    "gemma-4-26b-a4b-it"
+  ).replace(/^models\//, "");
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+      `${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are an elite SMC trader. Analyze this ${symbol} chart data: ${JSON.stringify(ohlcvData.slice(-50))}. Local SMC engine found: ${JSON.stringify(analysis)}. Is there a high probability SMC setup? Look for: Order Blocks, BOS/CHOCH, FVG, liquidity sweeps. Respond in JSON only: { confirmed: true/false, direction: 'BUY'/'SELL', confidence: 0-100, reason: string, entry: number, sl: number, tp: number }`,
+              text: [
+                "You are an elite SMC trading analyst for OGFX demo trading. Use ANFX LSBR and Shakuni trap logic. Do not claim certainty and do not provide financial advice.",
+                "Use the strategy: liquidity sweep, BOS/MSS/CHOCH, displacement, order block/FVG/supply/demand retest, HTF bias, TP/SL discipline, and capital preservation.",
+                "BUY only after sell-side liquidity sweep plus bullish structure confirmation. SELL only after buy-side liquidity sweep plus bearish structure confirmation. If unclear, return WAIT.",
+                "Return JSON only with keys: confirmed, direction, confidence, reason, entry, sl, tp.",
+                "Allowed direction values are BUY, SELL, WAIT. Confirm true only when confidence is at least 70 and TP/SL are valid.",
+                `Symbol: ${symbol}`,
+                `OHLCV data: ${JSON.stringify(ohlcvData.slice(-80))}`,
+                `Local SMC engine result: ${JSON.stringify(analysis)}`,
+              ].join("\n\n"),
             }],
           }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 700, responseMimeType: "application/json" },
         }),
       }
     );
 
     const raw = await response.text();
-    if (!response.ok) throw new Error(`Gemma returned ${response.status}: ${raw.slice(0, 220)}`);
+    if (!response.ok) throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 220)}`);
     const payload = JSON.parse(raw || "{}");
     const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join("") ?? "{}";
     const parsed = parseGemmaJson(text);

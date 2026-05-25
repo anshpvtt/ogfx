@@ -24,6 +24,20 @@ function normalizeTimeframe(value: unknown) {
   return VALID_TIMEFRAMES.has(raw) ? raw : "1H";
 }
 
+function ema(values: number[], period: number) {
+  if (!values.length) return 0;
+  const multiplier = 2 / (period + 1);
+  return values.reduce((previous, value, index) => index === 0 ? value : (value - previous) * multiplier + previous, values[0]);
+}
+
+function marketSession(date = new Date()) {
+  const hour = date.getUTCHours();
+  if (hour >= 0 && hour < 7) return "Asia";
+  if (hour >= 7 && hour < 12) return "London";
+  if (hour >= 12 && hour < 21) return "New York";
+  return "Rollover";
+}
+
 function localFallback(pair: string, timeframe: string, smc: any, snapshot: any, warning: string) {
   const signal = smc?.signal ?? {};
   const bias = signal.signal === "BUY" || signal.signal === "SELL" ? signal.signal : "WAIT";
@@ -100,14 +114,38 @@ export async function POST(request: NextRequest) {
 
   const smc = runSmcEngine(candles.slice(-140), pair, timeframe);
   const snapshot = body?.snapshot?.latest ? body.snapshot : snapshotFromCandles(pair, timeframe, candles);
+  const closes = candles.map((candle: any) => Number(candle.close)).filter(Number.isFinite);
+  const datasetContext = {
+    symbol: pair,
+    timeframe,
+    currentPrice: snapshot?.latest?.close ?? closes.at(-1) ?? null,
+    session: marketSession(),
+    swingHigh: smc?.htfBias?.swingHigh ?? null,
+    swingLow: smc?.htfBias?.swingLow ?? null,
+    resistance: smc?.liquidity?.bsl?.slice?.(-5) ?? [],
+    support: smc?.liquidity?.ssl?.slice?.(-5) ?? [],
+    ema20: Number(ema(closes.slice(-120), 20).toFixed(6)),
+    ema50: Number(ema(closes.slice(-160), 50).toFixed(6)),
+    htfBias: smc?.htfBias?.bias ?? snapshot?.trend ?? "NEUTRAL",
+  };
   const prompt = smcAnalysisPrompt(String(strategy?.raw_text || "").slice(0, 12000));
   const userMessage = [
     `Pair: ${pair}`,
     `TradingView symbol: ${asset.tradingViewSymbol}`,
     `Timeframe: ${timeframe}`,
+    `ANFX/Shakuni dataset context: ${JSON.stringify(datasetContext)}`,
+    typeof body?.imageDataUrl === "string" ? "A live chart screenshot is attached to this same request. Use the image together with the structured data below." : "No chart screenshot was attached; use structured candles and SMC engine output.",
     `Current market snapshot: ${JSON.stringify(snapshot).slice(0, 9000)}`,
     `OGFX deterministic SMC engine result: ${JSON.stringify(smc).slice(0, 7000)}`,
     `Recent OHLCV candles: ${JSON.stringify(candles.slice(-90)).slice(0, 9000)}`,
+    `Demo account: ${JSON.stringify(body?.account ?? null).slice(0, 2500)}`,
+    `Demo settings / risk profile: ${JSON.stringify(body?.settings ?? body?.riskProfile ?? null).slice(0, 2500)}`,
+    `Open demo orders: ${JSON.stringify(body?.openOrders ?? []).slice(0, 2500)}`,
+    `Pending demo orders: ${JSON.stringify(body?.pendingOrders ?? []).slice(0, 2500)}`,
+    `Active selected order: ${JSON.stringify(body?.activeOrder ?? null).slice(0, 1800)}`,
+    `Recent demo order history: ${JSON.stringify(body?.history ?? []).slice(0, 2500)}`,
+    `Recent saved signals: ${JSON.stringify(body?.recentSignals ?? []).slice(0, 2500)}`,
+    `Required OGFX strategy logic: ${JSON.stringify(body?.strategyLogic ?? null).slice(0, 5000)}`,
     strategy?.name ? `Active user strategy name: ${strategy.name}` : "No active uploaded strategy.",
   ].join("\n\n");
 
@@ -122,7 +160,7 @@ export async function POST(request: NextRequest) {
     analysis = localFallback(pair, timeframe, smc, snapshot, friendlyAiError(error));
   }
 
-  const shouldSave = analysis.bias === "BUY" || analysis.bias === "SELL";
+  const shouldSave = body?.saveSignal !== false && (analysis.bias === "BUY" || analysis.bias === "SELL");
   let savedSignal = null;
   if (shouldSave) {
     const { data } = await supabase

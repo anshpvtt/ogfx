@@ -1,4 +1,4 @@
-export type AiProvider = "openrouter" | "ollama" | "gemini";
+export type AiProvider = "gemini";
 
 export type ChecklistItem = {
   label: string;
@@ -22,49 +22,80 @@ export type StructuredSmcAnalysis = {
   warning?: string;
 };
 
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const TEXT_MODEL_FALLBACK = "gemma-4-26b-a4b-it";
+const VISION_MODEL_FALLBACK = "gemini-2.5-flash";
 
-function openRouterKey() {
-  return process.env.OPENROUTER_API_KEY || "";
-}
-
-function openRouterModel() {
-  return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
-}
-
-function ollamaKey() {
-  return process.env.OLLAMA_API_KEY || "";
-}
-
-function ollamaModel(needsVision = false) {
-  if (needsVision) return process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:235b-instruct";
-  return process.env.OLLAMA_MODEL || "gemma4:31b";
-}
+const modelCache = new Map<string, string>();
 
 function geminiKey() {
-  return process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY || "";
+  return (
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.GOOGLE_AI_API_KEY ||
+    ""
+  );
 }
 
-function geminiModel(needsVision = false) {
-  return (
-    process.env.GEMINI_MODEL ||
-    process.env.GOOGLE_GEMINI_MODEL ||
-    (needsVision ? "gemini-2.5-flash" : "gemma-4")
-  ).replace(/^models\//, "");
+function stripModelName(model: string) {
+  return String(model || "").replace(/^models\//, "");
+}
+
+function configuredModel(needsVision = false) {
+  const model = needsVision
+    ? process.env.GEMINI_VISION_MODEL || process.env.GOOGLE_GEMINI_VISION_MODEL
+    : process.env.GEMMA_MODEL || process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
+  return model ? stripModelName(model) : "";
+}
+
+async function resolveGoogleModel(needsVision = false) {
+  const configured = configuredModel(needsVision);
+  if (configured) return configured;
+
+  const cacheKey = needsVision ? "vision" : "text";
+  const cached = modelCache.get(cacheKey);
+  if (cached) return cached;
+
+  const fallback = needsVision ? VISION_MODEL_FALLBACK : TEXT_MODEL_FALLBACK;
+  const key = geminiKey();
+  if (!key) return fallback;
+
+  try {
+    const response = await fetch(`${GEMINI_ENDPOINT}/models`, {
+      headers: { "x-goog-api-key": key },
+      next: { revalidate: 3600 },
+    });
+    if (!response.ok) throw new Error(`Models API returned ${response.status}`);
+
+    const payload = await response.json();
+    const models: Array<{ name?: string; supportedGenerationMethods?: string[]; supportedActions?: string[] }> =
+      Array.isArray(payload?.models) ? payload.models : [];
+    const candidates = models.filter((model) => {
+      const methods = model.supportedGenerationMethods ?? model.supportedActions ?? [];
+      return methods.includes("generateContent");
+    });
+    const priorities = needsVision
+      ? ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini"]
+      : ["gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-4", "gemma", "gemini-2.5-flash"];
+    const picked = priorities.flatMap((needle) =>
+      candidates.filter((model) => (model.name ?? "").toLowerCase().includes(needle))
+    )[0];
+    const resolved = stripModelName(picked?.name ?? candidates[0]?.name ?? fallback);
+    modelCache.set(cacheKey, resolved);
+    return resolved;
+  } catch {
+    modelCache.set(cacheKey, fallback);
+    return fallback;
+  }
 }
 
 export function friendlyAiError(error: unknown) {
-  const message = String((error as any)?.message || error || "AI provider unavailable");
-  if (/free-models-per-day/i.test(message)) {
-    return "OpenRouter free-model daily quota is exhausted. OGFX will retry later or use the next configured provider.";
-  }
+  const message = String((error as any)?.message || error || "Google AI provider unavailable");
   if (/429|rate.?limit|temporarily|quota/i.test(message)) {
-    return "AI provider is rate-limited right now. OGFX will retry later or use the next configured provider.";
+    return "Google AI is rate-limited right now. OGFX is using the local SMC fallback until requests are accepted again.";
   }
   if (/401|403|unauthorized|forbidden|api key/i.test(message)) {
-    return "AI provider rejected the server API key. Check the deployment environment variable.";
+    return "Google AI rejected the server API key. Check the deployment environment variable.";
   }
   return message.length > 260 ? `${message.slice(0, 257)}...` : message;
 }
@@ -75,18 +106,55 @@ function parseJson(text: string) {
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+  const normalizeParsed = (parsed: any) => Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
 
   try {
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    return normalizeParsed(JSON.parse(cleaned));
   } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(cleaned.slice(start, end + 1));
-      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    const fenced = [...cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+    for (let index = fenced.length - 1; index >= 0; index -= 1) {
+      try {
+        return normalizeParsed(JSON.parse(fenced[index]?.[1]?.trim() || "{}"));
+      } catch {
+        // Keep searching below.
+      }
     }
-    throw new Error("AI provider returned non-JSON output");
+
+    const parsedObjects: any[] = [];
+    for (let start = 0; start < cleaned.length; start += 1) {
+      if (cleaned[start] !== "{") continue;
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const char = cleaned[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === "\"") inString = false;
+          continue;
+        }
+        if (char === "\"") inString = true;
+        else if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              parsedObjects.push(normalizeParsed(JSON.parse(cleaned.slice(start, index + 1))));
+              start = index;
+            } catch {
+              // Ignore non-JSON brace blocks in model commentary.
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (parsedObjects.length) {
+      return parsedObjects[parsedObjects.length - 1];
+    }
+    throw new Error("Google AI returned non-JSON output");
   }
 }
 
@@ -95,12 +163,21 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function rrOrNull(value: unknown) {
+  if (typeof value === "string") {
+    const match = value.match(/1\s*:\s*([0-9.]+)/i);
+    if (match) return numberOrNull(match[1]);
+  }
+  return numberOrNull(value);
+}
+
 function side(value: unknown): StructuredSmcAnalysis["bias"] {
   return value === "BUY" || value === "SELL" || value === "WAIT" ? value : "WAIT";
 }
 
 export function normalizeSmcAnalysis(value: any, provider: StructuredSmcAnalysis["provider"], model: string): StructuredSmcAnalysis {
-  const bias = side(value?.bias ?? value?.decision ?? value?.signal);
+  const rawBias = value?.bias ?? value?.decision ?? value?.signal;
+  const bias = rawBias === "NO_TRADE" ? "WAIT" : side(rawBias);
   const stopLoss = value?.stop_loss ?? value?.stopLoss ?? value?.sl;
   const takeProfit = value?.take_profit ?? value?.takeProfit ?? value?.tp;
   const rr = value?.rr_ratio ?? value?.riskReward ?? value?.risk_reward ?? value?.rr;
@@ -111,13 +188,19 @@ export function normalizeSmcAnalysis(value: any, provider: StructuredSmcAnalysis
       }))
     : [
         { label: "Market bias selected", status: bias === "WAIT" ? "pending" : "pass" },
+        { label: "Liquidity swept", status: value?.liquidity_swept === true ? "pass" : "pending" },
+        { label: "Structure confirmed", status: value?.structure_confirmed === true ? "pass" : "pending" },
         { label: "TP/SL defined", status: numberOrNull(stopLoss) && numberOrNull(takeProfit) ? "pass" : "pending" },
-        { label: "SMC evidence reviewed", status: "pass" },
+        { label: "ANFX/Shakuni rules reviewed", status: "pass" },
       ];
 
   const confidence = Math.max(0, Math.min(100, Math.round(Number(value?.confidence ?? (bias === "WAIT" ? 45 : 70)))));
   const reasoning = String(value?.reasoning || value?.summary || value?.reason || "No complete setup explanation returned.").slice(0, 2000);
-  const strategyAlignment = String(value?.strategy_alignment || value?.strategyAlignment || "Compared against OGFX SMC rules.").slice(0, 1200);
+  const strategyAlignment = String(
+    value?.strategy_alignment ||
+    value?.strategyAlignment ||
+    `Compared against ANFX/Shakuni LSBR rules: liquidity_swept=${Boolean(value?.liquidity_swept)}, structure_confirmed=${Boolean(value?.structure_confirmed)}.`
+  ).slice(0, 1200);
 
   return {
     bias,
@@ -125,8 +208,8 @@ export function normalizeSmcAnalysis(value: any, provider: StructuredSmcAnalysis
     entry: numberOrNull(value?.entry),
     stop_loss: numberOrNull(stopLoss),
     take_profit: numberOrNull(takeProfit),
-    rr_ratio: numberOrNull(rr),
-    setup_type: String(value?.setup_type || value?.setupType || (bias === "WAIT" ? "WAIT" : "SMC confluence")).slice(0, 180),
+    rr_ratio: rrOrNull(rr),
+    setup_type: String(value?.setup_type || value?.setupType || (bias === "WAIT" ? "NO_SETUP" : "SMC confluence")).slice(0, 180),
     reasoning,
     strategy_alignment: strategyAlignment,
     checklist,
@@ -134,19 +217,6 @@ export function normalizeSmcAnalysis(value: any, provider: StructuredSmcAnalysis
     provider,
     model,
   };
-}
-
-function imageContent(imageDataUrl?: string) {
-  if (!imageDataUrl) return [];
-  return [{
-    type: "image_url",
-    image_url: { url: imageDataUrl },
-  }];
-}
-
-function ollamaImages(imageDataUrl?: string) {
-  if (!imageDataUrl) return [];
-  return [imageDataUrl.replace(/^data:[^;]+;base64,/, "")];
 }
 
 function geminiImageParts(imageDataUrl?: string) {
@@ -160,117 +230,28 @@ function geminiImageParts(imageDataUrl?: string) {
   }];
 }
 
-async function callOpenRouter(systemPrompt: string, userMessage: string, imageDataUrl?: string) {
-  const model = openRouterModel();
-  const content = imageDataUrl
-    ? [{ type: "text", text: userMessage }, ...imageContent(imageDataUrl)]
-    : userMessage;
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openRouterKey()}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "https://ogfx-frontend.vercel.app",
-      "X-Title": "OGFX Elite SMC Trading Engine",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content },
-      ],
-      temperature: 0.1,
-      max_tokens: 1200,
-      response_format: { type: "json_object" },
-    }),
-  });
+async function callGemini(systemPrompt: string, userMessage: string, imageDataUrl?: string, temperature = 0.15) {
+  const model = await resolveGoogleModel(Boolean(imageDataUrl));
+  const key = geminiKey();
+  if (!key) throw new Error("GEMINI_API_KEY is not configured");
 
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 500)}`);
-  const payload = JSON.parse(raw || "{}");
-  const contentValue = payload?.choices?.[0]?.message?.content;
-  const text = Array.isArray(contentValue)
-    ? contentValue.map((part: any) => part?.text || "").join("")
-    : String(contentValue || "{}");
-  return { value: parseJson(text), provider: "openrouter" as const, model };
-}
-
-async function callOllama(systemPrompt: string, userMessage: string, imageDataUrl?: string) {
-  const model = ollamaModel(Boolean(imageDataUrl));
-  const response = await fetch(OLLAMA_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ollamaKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: "user",
-        content: `${systemPrompt}\n\n${userMessage}`,
-        ...(imageDataUrl ? { images: ollamaImages(imageDataUrl) } : {}),
-      }],
-      stream: false,
-      format: "json",
-      options: { temperature: 0.1, num_predict: 1200 },
-    }),
-  });
-
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 500)}`);
-  const payload = JSON.parse(raw || "{}");
-  return { value: parseJson(payload?.message?.content ?? payload?.response ?? "{}"), provider: "ollama" as const, model };
-}
-
-async function callGemini(systemPrompt: string, userMessage: string, imageDataUrl?: string) {
-  const model = geminiModel(Boolean(imageDataUrl));
   const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-goog-api-key": geminiKey(),
+      "x-goog-api-key": key,
     },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }, ...geminiImageParts(imageDataUrl)] }],
-      generationConfig: { temperature: 0.15, responseMimeType: "application/json" },
+      generationConfig: { temperature, responseMimeType: "application/json" },
     }),
   });
 
   const raw = await response.text();
-  if (!response.ok) throw new Error(`Gemini returned ${response.status}: ${raw.slice(0, 500)}`);
+  if (!response.ok) throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 500)}`);
   const payload = JSON.parse(raw || "{}");
   const text = payload?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("") ?? "{}";
   return { value: parseJson(text), provider: "gemini" as const, model };
-}
-
-async function callProvider(systemPrompt: string, userMessage: string, imageDataUrl?: string, textOnly = false) {
-  const errors: string[] = [];
-
-  if (openRouterKey()) {
-    try {
-      return await callOpenRouter(systemPrompt, userMessage, imageDataUrl);
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
-
-  if (ollamaKey()) {
-    try {
-      return await callOllama(systemPrompt, userMessage, imageDataUrl);
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
-
-  if (geminiKey()) {
-    try {
-      return await callGemini(systemPrompt, userMessage, imageDataUrl);
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
-
-  throw new Error(errors.filter(Boolean).join(" | ") || `${textOnly ? "Text" : "AI"} provider key is not configured`);
 }
 
 export async function callGemmaAnalysis(params: {
@@ -278,85 +259,27 @@ export async function callGemmaAnalysis(params: {
   userMessage: string;
   imageDataUrl?: string;
 }) {
-  const result = await callProvider(params.systemPrompt, params.userMessage, params.imageDataUrl);
+  const result = await callGemini(params.systemPrompt, params.userMessage, params.imageDataUrl);
   return normalizeSmcAnalysis(result.value, result.provider, result.model);
 }
 
 export async function callGemmaText(systemPrompt: string, userMessage: string) {
-  const errors: string[] = [];
+  const model = await resolveGoogleModel(false);
+  const key = geminiKey();
+  if (!key) throw new Error("GEMINI_API_KEY is not configured");
 
-  if (openRouterKey()) {
-    const model = openRouterModel();
-    try {
-      const response = await fetch(OPENROUTER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openRouterKey()}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "https://ogfx-frontend.vercel.app",
-          "X-Title": "OGFX Elite SMC Trading Coach",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage },
-          ],
-          temperature: 0.35,
-          max_tokens: 1200,
-        }),
-      });
-      const raw = await response.text();
-      if (!response.ok) throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 500)}`);
-      const payload = JSON.parse(raw || "{}");
-      return { content: String(payload?.choices?.[0]?.message?.content || ""), provider: "openrouter" as const, model };
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
+  const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
+      generationConfig: { temperature: 0.35 },
+    }),
+  });
 
-  if (ollamaKey()) {
-    const model = ollamaModel(false);
-    try {
-      const response = await fetch(OLLAMA_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${ollamaKey()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: `${systemPrompt}\n\n${userMessage}` }],
-          stream: false,
-          options: { temperature: 0.35, num_predict: 1200 },
-        }),
-      });
-      const raw = await response.text();
-      if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 500)}`);
-      const payload = JSON.parse(raw || "{}");
-      return { content: String(payload?.message?.content || payload?.response || ""), provider: "ollama" as const, model };
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
-
-  if (geminiKey()) {
-    const model = geminiModel(false);
-    try {
-      const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey() },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
-          generationConfig: { temperature: 0.35 },
-        }),
-      });
-      const raw = await response.text();
-      if (!response.ok) throw new Error(`Gemini returned ${response.status}: ${raw.slice(0, 500)}`);
-      const payload = JSON.parse(raw || "{}");
-      const content = payload?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("") ?? "";
-      return { content, provider: "gemini" as const, model };
-    } catch (error) {
-      errors.push(friendlyAiError(error));
-    }
-  }
-
-  throw new Error(errors.filter(Boolean).join(" | ") || "AI provider key is not configured");
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 500)}`);
+  const payload = JSON.parse(raw || "{}");
+  const content = payload?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("") ?? "";
+  return { content, provider: "gemini" as const, model };
 }

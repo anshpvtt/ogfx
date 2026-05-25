@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     const { data: openOrders, error: ordersError } = await admin
       .from("demo_orders")
       .select("*")
-      .eq("status", "OPEN");
+      .in("status", ["OPEN", "open"]);
 
     if (ordersError) throw new Error(ordersError.message);
 
@@ -81,12 +81,17 @@ export async function GET(request: NextRequest) {
         .from("demo_orders")
         .select("*")
         .eq("user_id", setting.user_id)
-        .eq("status", "OPEN");
+        .in("status", ["OPEN", "open"]);
 
       const openForUser = ((userOpenOrders ?? []) as DemoOrderRow[]).slice();
       let openCount = openForUser.length;
       const maxOpen = Number(setting.max_open_trades ?? 5);
       const defaultSize = Number(setting.default_size ?? 1);
+      const { data: account } = await admin
+        .from("demo_accounts")
+        .select("*")
+        .eq("user_id", setting.user_id)
+        .maybeSingle();
 
       for (const assetId of defaultWatchedAssets(setting.watched_assets)) {
         if (openCount >= maxOpen) break;
@@ -108,9 +113,12 @@ export async function GET(request: NextRequest) {
               assetId: asset.id,
               interval: "1H",
               snapshot,
+              account,
+              settings: setting,
+              openOrders: openForUser,
               strategyLogic: {
                 source: "cron",
-                rule: "Generate live OGFX signals using all strategy datasets, SMC sweep logic, BOS/MSS confirmation, HTF alignment, TP/SL discipline, and max-risk guardrails.",
+                rule: "Generate live OGFX signals using ANFX LSBR, Shakuni trap rules, user PDF/video strategy context, SMC sweep logic, BOS/MSS confirmation, HTF alignment, TP/SL discipline, and max-risk guardrails.",
               },
               requireGemma: true,
             }),
@@ -151,12 +159,6 @@ export async function GET(request: NextRequest) {
         ) {
           continue;
         }
-
-        const { data: account } = await admin
-          .from("demo_accounts")
-          .select("*")
-          .eq("user_id", setting.user_id)
-          .maybeSingle();
 
         const requiredMargin = orderMargin({ entry: decision.entry, size: defaultSize });
         if (Number(account?.free_margin ?? account?.balance ?? 0) < requiredMargin) continue;

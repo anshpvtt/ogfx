@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { closeDemoOrder, fetchMarketSnapshot, recalculateDemoAccount, type DemoOrderRow } from "@/lib/demo-trading";
+import {
+  closeDemoOrder,
+  fetchMarketSnapshot,
+  orderPnl,
+  recalculateDemoAccount,
+  type DemoOrderRow,
+} from "@/lib/demo-trading";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -22,20 +28,89 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       .select("*")
       .eq("id", params.id)
       .eq("user_id", user.id)
-      .eq("status", "OPEN")
+      .in("status", ["OPEN", "open", "pending", "PENDING"])
       .maybeSingle();
 
     if (error) throw new Error(error.message);
-    if (!order) return NextResponse.json({ error: "Open order not found" }, { status: 404 });
+    if (!order) return NextResponse.json({ error: "Open or pending order not found" }, { status: 404 });
 
-    const snapshot = await fetchMarketSnapshot(order.asset_id, "1H");
-    const exitPrice = Number(body?.exitPrice ?? snapshot.latest?.close ?? order.entry);
+    const normalizedOrder = {
+      ...order,
+      asset_id: order.asset_id ?? order.symbol,
+      side: order.side ?? order.direction,
+      entry: Number(order.entry ?? order.entry_price),
+      size: Number(order.size ?? order.lot_size),
+    } as DemoOrderRow;
+
+    if (String(order.status).toLowerCase() === "pending") {
+      const closedAt = new Date().toISOString();
+      await supabase
+        .from("demo_orders")
+        .update({ status: "CLOSED", pnl: 0, closed_at: closedAt, updated_at: closedAt })
+        .eq("id", order.id)
+        .eq("user_id", user.id);
+      const account = await recalculateDemoAccount(supabase, user.id);
+      return NextResponse.json({ closed: { id: order.id, pnl: 0, closedAt, exitPrice: null }, account });
+    }
+
+    const snapshot = await fetchMarketSnapshot(normalizedOrder.asset_id, "1H");
+    const exitPrice = Number(body?.exitPrice ?? snapshot.latest?.close ?? normalizedOrder.entry);
     if (!Number.isFinite(exitPrice)) {
       return NextResponse.json({ error: "No valid exit price available" }, { status: 422 });
     }
 
-    const result = await closeDemoOrder(supabase, order as DemoOrderRow, exitPrice, "CLOSED");
-    const account = await recalculateDemoAccount(supabase, user.id, { [order.asset_id]: snapshot });
+    const orderSize = Number(normalizedOrder.size ?? 0);
+    const requestedCloseSize = Number(body?.closeSize ?? orderSize);
+    if (!Number.isFinite(requestedCloseSize) || requestedCloseSize <= 0) {
+      return NextResponse.json({ error: "Close size must be greater than zero" }, { status: 400 });
+    }
+
+    if (requestedCloseSize < orderSize) {
+      const closedAt = new Date().toISOString();
+      const closedSize = Number(requestedCloseSize.toFixed(4));
+      const remainingSize = Number((orderSize - closedSize).toFixed(4));
+      const pnl = orderPnl({ entry: normalizedOrder.entry, side: normalizedOrder.side, size: closedSize }, exitPrice);
+
+      const { error: updateError } = await supabase
+        .from("demo_orders")
+        .update({
+          size: remainingSize,
+          lot_size: remainingSize,
+          updated_at: closedAt,
+        })
+        .eq("id", order.id)
+        .eq("user_id", user.id);
+
+      if (updateError) throw new Error(updateError.message);
+
+      const { data: account, error: accountError } = await supabase
+        .from("demo_accounts")
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (accountError) throw new Error(accountError.message);
+      if (account) {
+        const balance = Number(account.balance ?? account.initial_balance ?? 10000) + pnl;
+        await supabase
+          .from("demo_accounts")
+          .update({
+            balance,
+            realized_pnl: Number(account.realized_pnl ?? 0) + pnl,
+            updated_at: closedAt,
+          })
+          .eq("user_id", user.id);
+      }
+
+      const accountAfterPartial = await recalculateDemoAccount(supabase, user.id, { [normalizedOrder.asset_id]: snapshot });
+      return NextResponse.json({
+        closed: { id: order.id, partial: true, closedSize, remainingSize, pnl, closedAt, exitPrice },
+        account: accountAfterPartial,
+      });
+    }
+
+    const result = await closeDemoOrder(supabase, normalizedOrder, exitPrice, "CLOSED");
+    const account = await recalculateDemoAccount(supabase, user.id, { [normalizedOrder.asset_id]: snapshot });
 
     return NextResponse.json({ closed: { id: order.id, ...result, exitPrice }, account });
   } catch (error: any) {

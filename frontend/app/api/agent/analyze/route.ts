@@ -15,13 +15,12 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "openrouter" | "ollama" | "local-demo";
+  mode: "gemma" | "local-demo";
 };
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
-const BACKEND_API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://ogfx-render-agent-free.onrender.com").replace(/\/$/, "");
+const TEXT_MODEL_FALLBACK = "gemma-4-26b-a4b-it";
+const VISION_MODEL_FALLBACK = "gemini-2.5-flash";
 
 async function readJson(relativePath: string, fallback: any = {}) {
   const root = path.basename(process.cwd()) === "frontend" ? path.resolve(process.cwd(), "..") : process.cwd();
@@ -43,11 +42,12 @@ async function readText(relativePath: string, fallback = "") {
 }
 
 async function loadDatasets() {
-  const [defaultStrategy, smcStrategy, strategyLibrary, pdfStrategyText] = await Promise.all([
+  const [defaultStrategy, smcStrategy, strategyLibrary, pdfStrategyText, anfxShakuniStrategy] = await Promise.all([
     readJson("strategies/default.json", {}),
     readJson("strategies/smc.json", {}),
     readJson("backend/data/strategies.json", []),
     readText("docs/SMC-STRATEGY.md", ""),
+    readJson("strategies/anfx-shakuni.json", {}),
   ]);
 
   return {
@@ -55,6 +55,7 @@ async function loadDatasets() {
     smcStrategy,
     strategyLibrary,
     pdfStrategyText,
+    anfxShakuniStrategy,
   };
 }
 
@@ -67,51 +68,34 @@ function getGeminiApiKey() {
   );
 }
 
-function getOpenRouterApiKey() {
-  return process.env.OPENROUTER_API_KEY || "";
-}
-
-function getOpenRouterModel() {
-  return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
-}
-
-function getOllamaApiKey() {
-  return process.env.OLLAMA_API_KEY || "";
-}
-
-function getOllamaModel(needsVision = false) {
-  if (needsVision) return process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:235b-instruct";
-  return process.env.OLLAMA_MODEL || "gemma4:31b";
-}
-
 function friendlyAiError(error: any) {
-  const message = String(error?.message || error || "AI provider unavailable");
-  if (/free-models-per-day/i.test(message)) {
-    return "OpenRouter free model daily limit reached for this account. OGFX local SMC fallback is active until quota resets or credits are added.";
+  const message = String(error?.message || error || "Google AI provider unavailable");
+  if (/unauthorized|401|403|api key/i.test(message)) {
+    return "Google AI rejected the API key. OGFX local SMC fallback is active.";
   }
-  if (/subscription|upgrade/i.test(message)) {
-    return "Selected AI model requires a paid subscription. OGFX is using the next free provider or local SMC fallback.";
-  }
-  if (/unauthorized|401|403/i.test(message)) {
-    return "AI provider rejected the API key. Check the server-side key value; OGFX local SMC fallback is active.";
-  }
-  if (/429|rate.?limit|temporarily/i.test(message)) {
-    return "AI provider is temporarily rate-limited. OGFX local SMC fallback is active.";
+  if (/429|rate.?limit|temporarily|quota/i.test(message)) {
+    return "Google AI is temporarily rate-limited. OGFX local SMC fallback is active.";
   }
   return message.length > 220 ? `${message.slice(0, 217)}...` : message;
 }
 
-async function resolveGemmaModel(apiKey: string, needsVision = false) {
-  const configured = process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
-  if (configured && !(needsVision && configured.toLowerCase().includes("gemma"))) {
-    return configured.replace(/^models\//, "");
-  }
+function configuredModel(needsVision = false) {
+  const model = needsVision
+    ? process.env.GEMINI_VISION_MODEL || process.env.GOOGLE_GEMINI_VISION_MODEL
+    : process.env.GEMMA_MODEL || process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
+  return model ? model.replace(/^models\//, "") : "";
+}
 
+async function resolveGemmaModel(apiKey: string, needsVision = false) {
+  const configured = configuredModel(needsVision);
+  if (configured) return configured;
+
+  const fallback = needsVision ? VISION_MODEL_FALLBACK : TEXT_MODEL_FALLBACK;
   const response = await fetch(`${GEMINI_ENDPOINT}/models`, {
     headers: { "x-goog-api-key": apiKey },
     next: { revalidate: 3600 },
   });
-  if (!response.ok) return needsVision ? "gemini-2.5-flash" : "gemma-4";
+  if (!response.ok) return fallback;
 
   const payload = await response.json();
   const models: Array<{ name?: string; supportedGenerationMethods?: string[]; supportedActions?: string[] }> =
@@ -122,23 +106,23 @@ async function resolveGemmaModel(apiKey: string, needsVision = false) {
   });
   const priorities = needsVision
     ? ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini"]
-    : ["gemma-4", "gemma", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini"];
+    : ["gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-4", "gemma", "gemini-2.5-flash"];
   const picked = priorities.flatMap((needle) =>
     candidates.filter((model) => (model.name ?? "").toLowerCase().includes(needle))
   )[0];
-  const gemma = picked ?? candidates.find((model) => {
-    const name = model.name ?? "";
-    return name.toLowerCase().includes("gemma");
-  });
 
-  return (gemma?.name ?? candidates[0]?.name ?? "gemini-2.5-flash").replace(/^models\//, "");
+  return (picked?.name ?? candidates[0]?.name ?? fallback).replace(/^models\//, "");
 }
 
 function coerceDecision(value: any, model: string, mode: AgentDecision["mode"]): AgentDecision {
-  const decision = value?.decision === "BUY" || value?.decision === "SELL" || value?.decision === "WAIT" ? value.decision : "WAIT";
+  const rawDecision = value?.decision ?? value?.bias;
+  const decision = rawDecision === "BUY" || rawDecision === "SELL" || rawDecision === "WAIT" ? rawDecision : "WAIT";
   const confidence = Math.max(0, Math.min(100, Number(value?.confidence ?? 50)));
   const stopLoss = value?.stopLoss ?? value?.sl;
   const takeProfit = value?.takeProfit ?? value?.tp;
+  const rr = typeof value?.rr_ratio === "string"
+    ? Number(value.rr_ratio.match(/1\s*:\s*([0-9.]+)/i)?.[1])
+    : Number(value?.riskReward ?? value?.rr_ratio ?? value?.rr);
   const summary = value?.summary ?? value?.reason;
 
   return {
@@ -147,9 +131,9 @@ function coerceDecision(value: any, model: string, mode: AgentDecision["mode"]):
     entry: Number.isFinite(Number(value?.entry)) ? Number(value.entry) : null,
     stopLoss: Number.isFinite(Number(stopLoss)) ? Number(stopLoss) : null,
     takeProfit: Number.isFinite(Number(takeProfit)) ? Number(takeProfit) : null,
-    riskReward: Number.isFinite(Number(value?.riskReward ?? value?.rr)) ? Number(value?.riskReward ?? value?.rr) : null,
+    riskReward: Number.isFinite(rr) ? rr : null,
     bias: String(value?.bias || "NEUTRAL"),
-    summary: String(summary || "No high-confidence setup. Wait for cleaner confirmation."),
+    summary: String(summary || value?.reasoning || "No high-confidence setup. Wait for cleaner confirmation."),
     reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 5).map(String) : [String(value?.reason || "Insufficient confluence")],
     invalidation: String(value?.invalidation || "Setup invalidates if price closes beyond the protected liquidity extreme."),
     model,
@@ -157,7 +141,7 @@ function coerceDecision(value: any, model: string, mode: AgentDecision["mode"]):
   };
 }
 
-function localDecision(body: any, model = "local-rule-agent"): AgentDecision {
+function localDecision(body: any, model = "ogfx-smc-fallback"): AgentDecision {
   const latest = body?.snapshot?.latest;
   const close = Number(latest?.close ?? body?.price ?? 0);
   const atr = Number(body?.snapshot?.atr ?? 0);
@@ -180,13 +164,13 @@ function localDecision(body: any, model = "local-rule-agent"): AgentDecision {
     bias: trend,
     summary:
       decision === "WAIT"
-        ? "Local agent is waiting for stronger SMC confirmation before a demo order."
-        : `Local agent sees ${trend.toLowerCase()} structure with acceptable demo risk spacing.`,
+        ? "Local SMC fallback is waiting for stronger confirmation before a demo order."
+        : `Local SMC fallback sees ${trend.toLowerCase()} structure with guarded risk levels.`,
     reasons: [
       `Trend state: ${trend}`,
       `Latest change: ${changePct.toFixed(2)}%`,
       `ATR volatility: ${volatility.toFixed(2)}%`,
-      "SMC rule guardrails require TP/SL before any demo execution",
+      "SMC guardrails require TP/SL before any demo execution",
     ],
     invalidation: "Invalidate if price closes through the stop-loss side before confirmation.",
     model,
@@ -222,7 +206,7 @@ async function callGemma({
 
   const raw = await response.text();
   if (!response.ok) {
-    throw new Error(`Gemma returned ${response.status}: ${raw.slice(0, 220)}`);
+    throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 220)}`);
   }
 
   const payload = JSON.parse(raw || "{}");
@@ -236,18 +220,55 @@ function parseGemmaJson(text: string) {
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+  const normalizeParsed = (parsed: any) => Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
 
   try {
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    return normalizeParsed(JSON.parse(cleaned));
   } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(cleaned.slice(start, end + 1));
-      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    const fenced = [...cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+    for (let index = fenced.length - 1; index >= 0; index -= 1) {
+      try {
+        return normalizeParsed(JSON.parse(fenced[index]?.[1]?.trim() || "{}"));
+      } catch {
+        // Keep searching below.
+      }
     }
-    throw new Error("Gemma returned non-JSON analysis");
+
+    const parsedObjects: any[] = [];
+    for (let start = 0; start < cleaned.length; start += 1) {
+      if (cleaned[start] !== "{") continue;
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const char = cleaned[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === "\"") inString = false;
+          continue;
+        }
+        if (char === "\"") inString = true;
+        else if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              parsedObjects.push(normalizeParsed(JSON.parse(cleaned.slice(start, index + 1))));
+              start = index;
+            } catch {
+              // Ignore non-JSON brace blocks in model commentary.
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (parsedObjects.length) {
+      return parsedObjects[parsedObjects.length - 1];
+    }
+    throw new Error("Google AI returned non-JSON analysis");
   }
 }
 
@@ -274,149 +295,9 @@ function toImageParts(body: any) {
   });
 }
 
-function toOpenRouterImageParts(body: any) {
-  const sources = Array.isArray(body?.images) ? body.images : [body?.imageDataUrl || body?.imageBase64].filter(Boolean);
-  return sources.flatMap((source: any) => {
-    if (!source) return [];
-    if (typeof source === "object" && source.data) {
-      const mimeType = String(source.mimeType || source.mime_type || "image/png");
-      const raw = String(source.data);
-      return [{
-        type: "image_url",
-        image_url: {
-          url: raw.startsWith("data:") ? raw : `data:${mimeType};base64,${raw.replace(/^data:[^;]+;base64,/, "")}`,
-        },
-      }];
-    }
-
-    const value = String(source);
-    return [{
-      type: "image_url",
-      image_url: {
-        url: value.startsWith("data:") ? value : `data:${body?.imageMimeType || "image/png"};base64,${value}`,
-      },
-    }];
-  });
-}
-
-function toOllamaImages(body: any) {
-  const sources = Array.isArray(body?.images) ? body.images : [body?.imageDataUrl || body?.imageBase64].filter(Boolean);
-  return sources.flatMap((source: any) => {
-    if (!source) return [];
-    if (typeof source === "object" && source.data) {
-      return [String(source.data).replace(/^data:[^;]+;base64,/, "")];
-    }
-
-    return [String(source).replace(/^data:[^;]+;base64,/, "")];
-  });
-}
-
-async function callOllama({
-  apiKey,
-  model,
-  prompt,
-  images = [],
-}: {
-  apiKey: string;
-  model: string;
-  prompt: string;
-  images?: string[];
-}) {
-  const response = await fetch(OLLAMA_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: "user",
-        content: prompt,
-        ...(images.length ? { images } : {}),
-      }],
-      stream: false,
-      format: "json",
-      options: {
-        temperature: 0.1,
-        num_predict: 800,
-      },
-    }),
-  });
-
-  const raw = await response.text();
-  if (!response.ok) {
-    throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
-  }
-
-  const payload = JSON.parse(raw || "{}");
-  const text = payload?.message?.content ?? payload?.response ?? "{}";
-  return parseGemmaJson(text);
-}
-
-async function callOpenRouter({
-  apiKey,
-  model,
-  prompt,
-  imageParts = [],
-}: {
-  apiKey: string;
-  model: string;
-  prompt: string;
-  imageParts?: Array<{ type: "image_url"; image_url: { url: string } }>;
-}) {
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "https://ogfx-frontend.vercel.app",
-      "X-Title": "OGFX Elite SMC Trading Engine",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: "user",
-        content: imageParts.length ? [{ type: "text", text: prompt }, ...imageParts] : prompt,
-      }],
-      temperature: 0.1,
-      max_tokens: 700,
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  const raw = await response.text();
-  if (!response.ok) {
-    throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
-  }
-
-  const payload = JSON.parse(raw || "{}");
-  const content = payload?.choices?.[0]?.message?.content;
-  const text = Array.isArray(content)
-    ? content.map((part: any) => part?.text || "").join("")
-    : String(content || "{}");
-  return parseGemmaJson(text);
-}
-
-async function callBackendAgent(body: any) {
-  const response = await fetch(`${BACKEND_API_URL}/agent/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const raw = await response.text();
-  if (!response.ok) {
-    throw new Error(`Backend agent returned ${response.status}: ${raw.slice(0, 220)}`);
-  }
-
-  const payload = JSON.parse(raw || "{}");
-  if (!payload?.decision) throw new Error("Backend agent returned no decision");
-  return payload.decision;
-}
-
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
-  const assetId = String(body?.assetId ?? "").toUpperCase();
+  const assetId = String(body?.assetId ?? body?.pair ?? body?.symbol ?? "").toUpperCase();
   const asset = getTradingAsset(assetId);
 
   if (!body || !asset) {
@@ -424,111 +305,54 @@ export async function POST(request: NextRequest) {
   }
 
   const datasets = await loadDatasets();
-  const ollamaApiKey = getOllamaApiKey();
-  const openRouterApiKey = getOpenRouterApiKey();
   const geminiApiKey = getGeminiApiKey();
   const imageParts = toImageParts(body);
-  const ollamaImages = toOllamaImages(body);
-  const openRouterImageParts = toOpenRouterImageParts(body);
-  const model = openRouterApiKey
-    ? getOpenRouterModel()
-    : ollamaApiKey
-      ? getOllamaModel(ollamaImages.length > 0)
-      : geminiApiKey
-        ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
-        : getOpenRouterModel();
+  const model = geminiApiKey
+    ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
+    : imageParts.length > 0 ? VISION_MODEL_FALLBACK : TEXT_MODEL_FALLBACK;
   const requireGemma = Boolean(body.requireGemma);
-
   const prompt = [
-    "You are OGFX Agent, a demo-only Smart Money Concepts analyst. Do not claim certainty and do not provide financial advice.",
-    "Return strict JSON only with keys: decision, confidence, entry, stopLoss, takeProfit, riskReward, bias, summary, reasons, invalidation.",
-    "Allowed decision values: BUY, SELL, WAIT. Confidence must be 0-100. TP/SL must be present for BUY/SELL.",
-    imageParts.length ? "Attached image(s) are chart screenshots. Read market structure, candles, liquidity, zones, trend, and visible price action from them, but only trade if the OGFX strategy rules agree." : "",
+    "You are an elite SMC trading analyst for OGFX demo trading. Use Gemma reasoning, ANFX LSBR rules, Shakuni trap rules, uploaded PDFs/transcripts, and the live chart data. Do not claim certainty and do not provide financial advice.",
+    "ANALYSIS FRAMEWORK: 1) Market Structure: BOS or MSS. 2) Liquidity: sweep of swing highs/lows. 3) Displacement: impulsive candle after sweep. 4) POI: OB/FVG/supply/demand retest. 5) Confirmation: rejection or mitigation at POI.",
+    "STRICT RULES: BUY only if liquidity swept below + bullish MSS/BOS + demand OB/FVG retest. SELL only if liquidity swept above + bearish MSS/BOS + supply OB/FVG retest. If unclear, return NO_TRADE. Never force a trade.",
+    "Return strict JSON only with keys: bias, confidence, entry, sl, tp, rr_ratio, reasoning, setup_type, liquidity_swept, structure_confirmed.",
+    "Allowed bias values: BUY, SELL, NO_TRADE. Confidence must be 0-100. TP/SL must be numeric for BUY/SELL and 0 for NO_TRADE. Reasoning must mention setup logic and capital/risk suitability.",
+    imageParts.length ? "Attached image(s) are live chart screenshots. Read market structure, candles, liquidity, zones, trend, and visible price action from them, but only trade if the OGFX strategy rules agree." : "",
     `Asset: ${asset.id} (${asset.name})`,
-    `Timeframe: ${body.interval ?? "15"}`,
-    `Market snapshot: ${JSON.stringify(body.snapshot ?? null).slice(0, 6000)}`,
+    `Timeframe: ${body.interval ?? body.timeframe ?? "15"}`,
+    `Market snapshot: ${JSON.stringify(body.snapshot ?? null).slice(0, 7000)}`,
+    `Demo account: ${JSON.stringify(body.account ?? null).slice(0, 2500)}`,
+    `Demo settings/risk profile: ${JSON.stringify(body.settings ?? body.riskProfile ?? null).slice(0, 2500)}`,
     `Required OGFX strategy logic: ${JSON.stringify(body.strategyLogic ?? null).slice(0, 6000)}`,
-    `Open demo orders: ${JSON.stringify(body.openOrders ?? []).slice(0, 2000)}`,
-    `Recent demo history: ${JSON.stringify(body.history ?? []).slice(0, 2000)}`,
+    `Open demo orders: ${JSON.stringify(body.openOrders ?? []).slice(0, 2500)}`,
+    `Pending demo orders: ${JSON.stringify(body.pendingOrders ?? []).slice(0, 2500)}`,
+    `Active selected order: ${JSON.stringify(body.activeOrder ?? null).slice(0, 1800)}`,
+    `Recent demo history: ${JSON.stringify(body.history ?? []).slice(0, 2500)}`,
+    `Recent saved signals: ${JSON.stringify(body.recentSignals ?? []).slice(0, 2500)}`,
     `Datasets: ${JSON.stringify(datasets).slice(0, 9000)}`,
   ].join("\n\n");
 
-  if (!ollamaApiKey && !openRouterApiKey && !geminiApiKey) {
-    try {
-      const backendDecision = await callBackendAgent(body);
-      return NextResponse.json({ decision: backendDecision });
-    } catch (error) {
-      if (!requireGemma) {
-        return NextResponse.json({
-          decision: localDecision(body, model),
-          warning: friendlyAiError(error),
-        });
-      }
-    }
-
+  if (!geminiApiKey) {
     if (requireGemma) {
       return NextResponse.json(
-        { error: "OLLAMA_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY is required for production signal generation" },
+        { error: "GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY is required for Google AI signal generation" },
         { status: 503 }
       );
     }
 
     return NextResponse.json({
       decision: localDecision(body, model),
-      warning: "No server-side Gemini API key configured. Using deterministic local demo agent.",
+      warning: "No server-side Google AI key configured. Using deterministic local SMC fallback.",
     });
   }
 
-  const errors: string[] = [];
   try {
-    if (openRouterApiKey) {
-      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model, prompt, imageParts: openRouterImageParts });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, model, "openrouter") });
-    }
-
-    if (ollamaApiKey) {
-      const ollamaModel = getOllamaModel(ollamaImages.length > 0);
-      const rawDecision = await callOllama({ apiKey: ollamaApiKey, model: ollamaModel, prompt, images: ollamaImages });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, ollamaModel, "ollama") });
-    }
-
     const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
     return NextResponse.json({ decision: coerceDecision(rawDecision, model, "gemma") });
   } catch (error: any) {
-    errors.push(friendlyAiError(error));
-  }
-
-  try {
-    if (ollamaApiKey && openRouterApiKey) {
-      const ollamaModel = getOllamaModel(ollamaImages.length > 0);
-      const rawDecision = await callOllama({ apiKey: ollamaApiKey, model: ollamaModel, prompt, images: ollamaImages });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, ollamaModel, "ollama") });
-    }
-
-    if (geminiApiKey && (ollamaApiKey || openRouterApiKey)) {
-      const geminiModel = await resolveGemmaModel(geminiApiKey, imageParts.length > 0);
-      const rawDecision = await callGemma({ apiKey: geminiApiKey, model: geminiModel, prompt, imageParts });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, geminiModel, "gemma") });
-    }
-  } catch (error: any) {
-    errors.push(friendlyAiError(error));
-  }
-
-  try {
-    const backendDecision = await callBackendAgent(body);
-    return NextResponse.json({ decision: backendDecision, warning: errors.filter(Boolean).join(" | ") || undefined });
-  } catch (error: any) {
-    errors.push(friendlyAiError(error));
-  }
-
-  {
-    const message = errors.filter(Boolean).join(" | ") || "AI provider unavailable";
-    const providerRateLimited = /429|rate.?limit|temporarily/i.test(message);
-    if (requireGemma && !providerRateLimited) {
-      return NextResponse.json(
-        { error: message },
-        { status: 502 }
-      );
+    const message = friendlyAiError(error);
+    if (requireGemma && !/429|rate.?limit|temporarily|quota/i.test(message)) {
+      return NextResponse.json({ error: message }, { status: 502 });
     }
 
     return NextResponse.json({

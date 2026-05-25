@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { defaultWatchedAssets, ensureDemoSettings } from "@/lib/demo-trading";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export async function PATCH(request: NextRequest) {
+async function getUserOrResponse() {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -10,8 +10,29 @@ export async function PATCH(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return { response: NextResponse.json({ error: "Authentication required" }, { status: 401 }) };
   }
+
+  return { supabase, user };
+}
+
+export async function GET() {
+  const auth = await getUserOrResponse();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
+
+  try {
+    const settings = await ensureDemoSettings(supabase, user.id);
+    return NextResponse.json({ settings });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message || "Failed to load demo settings" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const auth = await getUserOrResponse();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const body = await request.json().catch(() => null);
   const autoTradingEnabled = Boolean(body?.autoTradingEnabled);

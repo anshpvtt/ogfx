@@ -1,0 +1,69 @@
+{
+  "id": "anfx_shakuni_core",
+  "name": "ANFX + Midnight Smart-Money Shakuni Strategy",
+  "source_files": [
+    "C:\\Users\\ansh\\Downloads\\anfx book till ch 8.pdf",
+    "C:\\Users\\ansh\\Downloads\\Midnight Smart-Money (Shakuni) Strategy Overview.pdf"
+  ],
+  "summary": "A liquidity-first Smart Money strategy combining ANFX LSBR execution with Shakuni trap/opening-range sweep logic. It trades after liquidity is collected, structure confirms, and price retests a valid supply/demand zone or imbalance.",
+  "core_models": [
+    {
+      "name": "LSBR",
+      "steps": [
+        "Identify equal highs/lows, obvious support/resistance, range edges, session highs/lows, or other liquidity pools.",
+        "Wait for the sweep or liquidity grab; the sweep itself is not the entry.",
+        "Require displacement, rejection, BOS, MSS, or CHOCH in the intended direction.",
+        "Wait for a retest into a valid order block, FVG, supply/demand zone, or refined lower-timeframe zone.",
+        "Set stop loss beyond the sweep or zone extreme and target the next opposing liquidity pool or supply/demand zone."
+      ]
+    },
+    {
+      "name": "Shakuni Trap",
+      "steps": [
+        "Mark the midnight/opening range and obvious swing highs/lows.",
+        "A sweep above the range or swing high is bearish only after rejection and bearish structure confirmation.",
+        "A sweep below the range or swing low is bullish only after rejection and bullish structure confirmation.",
+        "Do not chase the first spike; wait for follow-through and confirmation pullback.",
+        "Use strict risk, usually around 1 percent of account capital, with a minimum practical 1:2 risk/reward."
+      ]
+    }
+  ],
+  "strict_rules": [
+    "BUY requires sell-side liquidity swept below equal lows/support, bullish MSS/BOS/CHOCH or displacement, and price returning to demand/order block/FVG.",
+    "SELL requires buy-side liquidity swept above equal highs/resistance, bearish MSS/BOS/CHOCH or displacement, and price returning to supply/order block/FVG.",
+    "No liquidity sweep means no high-quality trade.",
+    "No structure confirmation means no trade.",
+    "No valid POI retest means no trade.",
+    "Avoid middle-of-range entries.",
+    "Avoid weak zones: messy base, slow departure, multiple retests, counter-HTF direction, or strong opposite momentum.",
+    "HTF trend is the filter and zone is the trigger.",
+    "If setup quality or capital risk is unclear, return NO_TRADE instead of forcing a signal."
+  ],
+  "zone_validation": [
+    "Demand zones are Rally-Base-Rally or Drop-Base-Rally origins with strong bullish departure.",
+    "Supply zones are Drop-Base-Drop or Rally-Base-Drop origins with strong bearish departure.",
+    "Strong zones show explosive departure, little time in base, clear imbalance, and ideally a sweep before departure.",
+    "Refine large zones with body-to-body range or the sweep wick extreme to improve risk/reward.",
+    "Fresh zones are preferred; zones weaken after repeated touches."
+  ],
+  "risk_rules": [
+    "Be honest with the user about capital and margin; do not suggest a trade if account risk is not acceptable.",
+    "Prefer 0.5 percent to 1 percent risk per trade unless the user explicitly configured otherwise.",
+    "Never open or recommend a demo trade without numeric entry, stop loss, take profit, and risk/reward.",
+    "Stop loss belongs beyond the sweep wick or protected zone extreme.",
+    "Take profit should target the next logical opposing liquidity pool, supply/demand zone, or at least 1:2 risk/reward.",
+    "Backtest or strategy logic does not guarantee profit; market conditions and discipline still matter."
+  ],
+  "response_contract": {
+    "bias": "BUY | SELL | NO_TRADE",
+    "confidence": "0-100",
+    "entry": "number, 0 for NO_TRADE",
+    "sl": "number, 0 for NO_TRADE",
+    "tp": "number, 0 for NO_TRADE",
+    "rr_ratio": "1:X",
+    "reasoning": "one clear sentence explaining setup, rejection reason, and capital/risk suitability",
+    "setup_type": "OB_BUY | FVG_BUY | OB_SELL | FVG_SELL | NO_SETUP",
+    "liquidity_swept": "boolean",
+    "structure_confirmed": "boolean"
+  }
+}

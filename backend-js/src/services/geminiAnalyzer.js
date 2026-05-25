@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
+const TEXT_MODEL_FALLBACK = "gemma-4-26b-a4b-it";
+const VISION_MODEL_FALLBACK = "gemini-2.5-flash";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -39,25 +39,15 @@ function apiKey() {
   );
 }
 
-function openRouterApiKey() {
-  return process.env.OPENROUTER_API_KEY || "";
-}
-
-function openRouterModel() {
-  return process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
-}
-
-function ollamaApiKey() {
-  return process.env.OLLAMA_API_KEY || "";
-}
-
-function ollamaModel(needsVision = false) {
-  if (needsVision) return process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:235b-instruct";
-  return process.env.OLLAMA_MODEL || "gemma4:31b";
-}
-
 function stripModelName(model) {
   return String(model || "").replace(/^models\//, "");
+}
+
+function configuredModel(needsVision = false) {
+  const model = needsVision
+    ? process.env.GEMINI_VISION_MODEL || process.env.GOOGLE_GEMINI_VISION_MODEL
+    : process.env.GEMMA_MODEL || process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
+  return model ? stripModelName(model) : "";
 }
 
 function toImageParts(body = {}) {
@@ -87,91 +77,145 @@ function toImageParts(body = {}) {
   });
 }
 
-function toOpenRouterImageParts(body = {}) {
-  const sources = Array.isArray(body.images)
-    ? body.images
-    : [body.imageDataUrl || body.imageBase64].filter(Boolean);
-
-  return sources.flatMap((source) => {
-    if (!source) return [];
-    if (typeof source === "object" && source.data) {
-      const mimeType = String(source.mimeType || source.mime_type || "image/png");
-      const raw = String(source.data);
-      return [{
-        type: "image_url",
-        image_url: {
-          url: raw.startsWith("data:") ? raw : `data:${mimeType};base64,${raw.replace(/^data:[^;]+;base64,/, "")}`,
-        },
-      }];
-    }
-
-    const value = String(source);
-    return [{
-      type: "image_url",
-      image_url: {
-        url: value.startsWith("data:") ? value : `data:${body.imageMimeType || "image/png"};base64,${value}`,
-      },
-    }];
-  });
-}
-
-function toOllamaImages(body = {}) {
-  const sources = Array.isArray(body.images)
-    ? body.images
-    : [body.imageDataUrl || body.imageBase64].filter(Boolean);
-
-  return sources.flatMap((source) => {
-    if (!source) return [];
-    if (typeof source === "object" && source.data) {
-      return [String(source.data).replace(/^data:[^;]+;base64,/, "")];
-    }
-
-    return [String(source).replace(/^data:[^;]+;base64,/, "")];
-  });
-}
-
 function parseJson(text) {
   const cleaned = String(text || "{}")
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+  const normalizeParsed = (parsed) => Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
 
   try {
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    return normalizeParsed(JSON.parse(cleaned));
   } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(cleaned.slice(start, end + 1));
-      return Array.isArray(parsed) ? parsed[0] ?? {} : parsed;
+    const fenced = [...cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+    for (let index = fenced.length - 1; index >= 0; index -= 1) {
+      try {
+        return normalizeParsed(JSON.parse(fenced[index]?.[1]?.trim() || "{}"));
+      } catch {
+        // Keep searching below.
+      }
     }
-    throw new Error("Gemini returned non-JSON analysis");
+
+    const parsedObjects = [];
+    for (let start = 0; start < cleaned.length; start += 1) {
+      if (cleaned[start] !== "{") continue;
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const char = cleaned[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === "\"") inString = false;
+          continue;
+        }
+        if (char === "\"") inString = true;
+        else if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              parsedObjects.push(normalizeParsed(JSON.parse(cleaned.slice(start, index + 1))));
+              start = index;
+            } catch {
+              // Ignore non-JSON brace blocks in model commentary.
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (parsedObjects.length) {
+      return parsedObjects[parsedObjects.length - 1];
+    }
+    throw new Error("Google AI returned non-JSON analysis");
   }
 }
 
+function numeric(value, fallback = null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function confidenceNumber(value, fallback = 50) {
+  if (typeof value === "string") {
+    if (value.toUpperCase() === "HIGH") return 78;
+    if (value.toUpperCase() === "MEDIUM") return 64;
+    if (value.toUpperCase() === "LOW") return 48;
+  }
+  return Math.max(0, Math.min(100, numeric(value, fallback)));
+}
+
 function coerceDecision(value, model, mode = "gemini") {
-  const decision = value?.decision === "BUY" || value?.decision === "SELL" || value?.decision === "WAIT"
-    ? value.decision
+  const rawDecision = value?.decision ?? value?.bias;
+  const decision = rawDecision === "BUY" || rawDecision === "SELL" || rawDecision === "WAIT"
+    ? rawDecision
     : "WAIT";
   const stopLoss = value?.stopLoss ?? value?.sl;
   const takeProfit = value?.takeProfit ?? value?.tp;
+  const rr = typeof value?.rr_ratio === "string"
+    ? Number(value.rr_ratio.match(/1\s*:\s*([0-9.]+)/i)?.[1])
+    : Number(value?.riskReward ?? value?.rr_ratio ?? value?.rr);
   const summary = value?.summary ?? value?.reason;
 
   return {
     decision,
-    confidence: Math.max(0, Math.min(100, Number(value?.confidence ?? 50))),
-    entry: Number.isFinite(Number(value?.entry)) ? Number(value.entry) : null,
-    stopLoss: Number.isFinite(Number(stopLoss)) ? Number(stopLoss) : null,
-    takeProfit: Number.isFinite(Number(takeProfit)) ? Number(takeProfit) : null,
-    riskReward: Number.isFinite(Number(value?.riskReward ?? value?.rr)) ? Number(value?.riskReward ?? value?.rr) : null,
+    confidence: confidenceNumber(value?.confidence, 50),
+    entry: numeric(value?.entry, null),
+    stopLoss: numeric(stopLoss, null),
+    takeProfit: numeric(takeProfit, null),
+    riskReward: numeric(rr, null),
     bias: String(value?.bias || "NEUTRAL"),
-    summary: String(summary || "No high-confidence setup. Wait for cleaner confirmation."),
+    summary: String(summary || value?.reasoning || "No high-confidence setup. Wait for cleaner confirmation."),
     reasons: Array.isArray(value?.reasons) ? value.reasons.slice(0, 6).map(String) : [String(value?.reason || "Insufficient confluence")],
     invalidation: String(value?.invalidation || "Invalid if price closes beyond the protected liquidity extreme."),
     model,
     mode,
+  };
+}
+
+function localDecision(body = {}, model = "ogfx-smc-fallback", warning = "") {
+  const signal = body.engineResult?.signal || body.analysis?.signal || body.engineResult || {};
+  const rawDirection = signal.signal || signal.direction || signal.decision;
+  const latest = body.snapshot?.latest;
+  const close = numeric(latest?.close ?? body.price, 0);
+  const atr = numeric(body.snapshot?.atr, close * 0.004);
+  const trend = String(body.snapshot?.trend || signal.bias || "NEUTRAL").toUpperCase();
+  const changePct = numeric(body.snapshot?.dayChangePct, 0);
+  const engineDecision = rawDirection === "BUY" || rawDirection === "SELL" ? rawDirection : null;
+  const shouldBuy = trend === "BULLISH" && changePct >= -0.2;
+  const shouldSell = trend === "BEARISH" && changePct <= 0.2;
+  const decision = engineDecision || (shouldBuy ? "BUY" : shouldSell ? "SELL" : "WAIT");
+  const stopDistance = atr > 0 ? atr * 1.4 : close * 0.004;
+  const targetDistance = stopDistance * 2;
+  const entry = numeric(signal.entry, close || null);
+  const stopLoss = numeric(signal.stopLoss ?? signal.sl, entry ? (decision === "SELL" ? entry + stopDistance : entry - stopDistance) : null);
+  const takeProfit = numeric(signal.takeProfit ?? signal.tp, entry ? (decision === "SELL" ? entry - targetDistance : entry + targetDistance) : null);
+
+  return {
+    decision,
+    confidence: decision === "WAIT" ? 54 : confidenceNumber(signal.confidence, 68),
+    entry: entry ? Number(entry.toFixed(entry > 20 ? 2 : 5)) : null,
+    stopLoss: stopLoss ? Number(stopLoss.toFixed(stopLoss > 20 ? 2 : 5)) : null,
+    takeProfit: takeProfit ? Number(takeProfit.toFixed(takeProfit > 20 ? 2 : 5)) : null,
+    riskReward: numeric(signal.riskReward ?? signal.rr, decision === "WAIT" ? null : 2),
+    bias: trend,
+    summary:
+      decision === "WAIT"
+        ? "Local SMC fallback is waiting for stronger confirmation before a demo order."
+        : `Local SMC fallback sees ${trend.toLowerCase()} structure with guarded risk levels.`,
+    reasons: [
+      `Trend state: ${trend}`,
+      `Latest change: ${changePct.toFixed(2)}%`,
+      "SMC fallback used after Google AI was unavailable or not configured",
+    ],
+    invalidation: "Invalidate if price closes through the stop-loss side before confirmation.",
+    model,
+    mode: "local-demo",
+    ...(warning ? { warning } : {}),
   };
 }
 
@@ -188,11 +232,13 @@ export class GeminiAnalyzer {
         readJson("strategies/smc.json", {}),
         readJson("backend/data/strategies.json", []),
         readText("docs/SMC-STRATEGY.md", ""),
-      ]).then(([defaultStrategy, smcStrategy, strategyLibrary, pdfStrategyText]) => ({
+        readJson("strategies/anfx-shakuni.json", {}),
+      ]).then(([defaultStrategy, smcStrategy, strategyLibrary, pdfStrategyText, anfxShakuniStrategy]) => ({
         defaultStrategy,
         smcStrategy,
         strategyLibrary,
         pdfStrategyText,
+        anfxShakuniStrategy,
       }));
     }
 
@@ -200,13 +246,12 @@ export class GeminiAnalyzer {
   }
 
   async resolveModel(needsVision = false) {
-    const configured = process.env.GEMINI_MODEL || process.env.GOOGLE_GEMINI_MODEL;
-    if (configured && !(needsVision && configured.toLowerCase().includes("gemma"))) {
-      return stripModelName(configured);
-    }
+    const configured = configuredModel(needsVision);
+    if (configured) return configured;
 
+    const fallback = needsVision ? VISION_MODEL_FALLBACK : TEXT_MODEL_FALLBACK;
     const key = apiKey();
-    if (!key) throw new Error("GEMINI_API_KEY is required");
+    if (!key) return fallback;
 
     const cacheKey = needsVision ? "vision" : "text";
     if (this.modelCache.has(cacheKey)) return this.modelCache.get(cacheKey);
@@ -216,7 +261,6 @@ export class GeminiAnalyzer {
     });
 
     if (!response.ok) {
-      const fallback = "gemini-2.5-flash";
       this.modelCache.set(cacheKey, fallback);
       return fallback;
     }
@@ -229,11 +273,11 @@ export class GeminiAnalyzer {
     });
     const priorities = needsVision
       ? ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini"]
-      : ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini"];
+      : ["gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-4", "gemma", "gemini-2.5-flash"];
     const picked = priorities.flatMap((needle) =>
       candidates.filter((model) => (model.name ?? "").toLowerCase().includes(needle))
     )[0];
-    const resolved = stripModelName(picked?.name ?? candidates[0]?.name ?? "gemini-2.5-flash");
+    const resolved = stripModelName(picked?.name ?? candidates[0]?.name ?? fallback);
     this.modelCache.set(cacheKey, resolved);
     return resolved;
   }
@@ -272,135 +316,61 @@ export class GeminiAnalyzer {
   }
 
   async analyze(body = {}) {
-    const ollamaKey = ollamaApiKey();
-    const openRouterKey = openRouterApiKey();
     const key = apiKey();
-    if (!ollamaKey && !openRouterKey && !key) throw new Error("OLLAMA_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY is required");
-
     const imageParts = toImageParts(body);
-    const ollamaImages = toOllamaImages(body);
+    const model = await this.resolveModel(imageParts.length > 0);
+
+    if (!key) {
+      return localDecision(body, model, "No server-side Google AI key configured.");
+    }
+
     const datasets = await this.datasets();
     const prompt = [
-      "You are OGFX Agent, a demo-only Smart Money Concepts trading analyst. Do not claim certainty and do not provide financial advice.",
-      "Return strict JSON only with keys: decision, confidence, entry, stopLoss, takeProfit, riskReward, bias, summary, reasons, invalidation.",
-      "Allowed decision values: BUY, SELL, WAIT. TP and SL must be numeric for BUY or SELL. Prefer WAIT when confluence is incomplete.",
-      imageParts.length ? "Attached image(s) are chart screenshots. Read visible market structure, liquidity sweeps, candles, zones, and price action from the image." : "",
+      "You are an elite SMC trading analyst for OGFX demo trading. Use Gemma reasoning, ANFX LSBR rules, Shakuni trap rules, uploaded PDFs/transcripts, and the live chart data. Do not claim certainty and do not provide financial advice.",
+      "ANALYSIS FRAMEWORK: 1) Market Structure: BOS or MSS. 2) Liquidity: sweep of swing highs/lows. 3) Displacement: impulsive candle after sweep. 4) POI: OB/FVG/supply/demand retest. 5) Confirmation: rejection or mitigation at POI.",
+      "STRICT RULES: BUY only if liquidity swept below + bullish MSS/BOS + demand OB/FVG retest. SELL only if liquidity swept above + bearish MSS/BOS + supply OB/FVG retest. If unclear, return NO_TRADE. Never force a trade.",
+      "Return strict JSON only with keys: bias, confidence, entry, sl, tp, rr_ratio, reasoning, setup_type, liquidity_swept, structure_confirmed.",
+      "Allowed bias values: BUY, SELL, NO_TRADE. Confidence must be 0-100. TP/SL must be numeric for BUY/SELL and 0 for NO_TRADE. Reasoning must mention setup logic and capital/risk suitability.",
+      imageParts.length ? "Attached image(s) are live chart screenshots. Read visible market structure, liquidity sweeps, candles, zones, and price action from the image." : "",
       `Asset: ${body.assetId || body.symbol || "UNKNOWN"}`,
       `Timeframe: ${body.timeframe || body.interval || "15m"}`,
       `Market snapshot: ${JSON.stringify(body.snapshot ?? null).slice(0, 7000)}`,
       `Engine result: ${JSON.stringify(body.engineResult ?? null).slice(0, 5000)}`,
-      `Open demo orders: ${JSON.stringify(body.openOrders ?? []).slice(0, 2000)}`,
-      `Recent history: ${JSON.stringify(body.history ?? []).slice(0, 2000)}`,
+      `Demo account: ${JSON.stringify(body.account ?? null).slice(0, 2500)}`,
+      `Demo settings/risk profile: ${JSON.stringify(body.settings ?? body.riskProfile ?? null).slice(0, 2500)}`,
+      `Open demo orders: ${JSON.stringify(body.openOrders ?? []).slice(0, 2500)}`,
+      `Pending demo orders: ${JSON.stringify(body.pendingOrders ?? []).slice(0, 2500)}`,
+      `Active selected order: ${JSON.stringify(body.activeOrder ?? null).slice(0, 1800)}`,
+      `Recent history: ${JSON.stringify(body.history ?? []).slice(0, 2500)}`,
       `Required OGFX datasets and PDF strategy logic: ${JSON.stringify(datasets).slice(0, 11000)}`,
     ].join("\n\n");
 
-    const errors = [];
-    if (openRouterKey) {
-      const model = openRouterModel();
-      try {
-        const response = await fetch(OPENROUTER_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${openRouterKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": process.env.PUBLIC_APP_URL || "https://ogfx-frontend.vercel.app",
-            "X-Title": "OGFX Elite SMC Trading Engine",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{
-              role: "user",
-              content: toOpenRouterImageParts(body).length
-                ? [{ type: "text", text: prompt }, ...toOpenRouterImageParts(body)]
-                : prompt,
-            }],
-            temperature: 0.1,
-            max_tokens: 800,
-            response_format: { type: "json_object" },
-          }),
-        });
-
-        const raw = await response.text();
-        if (!response.ok) {
-          throw new Error(`OpenRouter returned ${response.status}: ${raw.slice(0, 220)}`);
-        }
-
-        const payload = JSON.parse(raw || "{}");
-        const content = payload?.choices?.[0]?.message?.content;
-        const text = Array.isArray(content)
-          ? content.map((part) => part?.text || "").join("")
-          : String(content || "{}");
-        return coerceDecision(parseJson(text), model, "openrouter");
-      } catch (error) {
-        errors.push(String(error?.message || error));
-      }
-    }
-
-    if (ollamaKey) {
-      const model = ollamaModel(ollamaImages.length > 0);
-      try {
-        const response = await fetch(OLLAMA_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${ollamaKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{
-              role: "user",
-              content: prompt,
-              ...(ollamaImages.length ? { images: ollamaImages } : {}),
-            }],
-            stream: false,
-            format: "json",
-            options: {
-              temperature: 0.1,
-              num_predict: 800,
-            },
-          }),
-        });
-
-        const raw = await response.text();
-        if (!response.ok) {
-          throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
-        }
-
-        const payload = JSON.parse(raw || "{}");
-        const text = payload?.message?.content ?? payload?.response ?? "{}";
-        return coerceDecision(parseJson(text), model, "ollama");
-      } catch (error) {
-        errors.push(String(error?.message || error));
-      }
-    }
-
-    if (!key) {
-      throw new Error(errors[0] || "AI provider unavailable and GEMINI_API_KEY is not configured");
-    }
-
-    const model = await this.resolveModel(imageParts.length > 0);
-    const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-      },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: "application/json",
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": key,
         },
-      }),
-    });
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
+          generationConfig: {
+            temperature: 0.2,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
 
-    const raw = await response.text();
-    if (!response.ok) {
-      throw new Error(`Gemini returned ${response.status}: ${raw.slice(0, 220)}`);
+      const raw = await response.text();
+      if (!response.ok) {
+        throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 220)}`);
+      }
+
+      const payload = JSON.parse(raw || "{}");
+      const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join("") ?? "{}";
+      return coerceDecision(parseJson(text), model, "gemini");
+    } catch (error) {
+      return localDecision(body, model, String(error?.message || error));
     }
-
-    const payload = JSON.parse(raw || "{}");
-    const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join("") ?? "{}";
-    return coerceDecision(parseJson(text), model, "gemini");
   }
 }

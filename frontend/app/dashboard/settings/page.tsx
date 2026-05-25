@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CreditCard, FileText, Loader2, Save, Shield } from "lucide-react";
+import { CreditCard, FileText, Link2, Loader2, Save, Shield } from "lucide-react";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,8 @@ export default function DashboardSettingsPage() {
   const [strategies, setStrategies] = useState<any[]>([]);
   const [strategyFile, setStrategyFile] = useState<File | null>(null);
   const [strategyName, setStrategyName] = useState("OGFX Playbook");
+  const [strategyVideoUrl, setStrategyVideoUrl] = useState("");
+  const [strategyNotes, setStrategyNotes] = useState("");
   const [startingBalance, setStartingBalance] = useState(10000);
   const [riskPerTrade, setRiskPerTrade] = useState(1);
   const [defaultSize, setDefaultSize] = useState(1);
@@ -65,18 +67,25 @@ export default function DashboardSettingsPage() {
   }
 
   async function uploadStrategy() {
-    if (!strategyFile) {
-      setMessage("Choose a PDF strategy first.");
+    if (!strategyFile && !strategyVideoUrl.trim() && !strategyNotes.trim()) {
+      setMessage("Add a PDF, YouTube strategy link, or pasted strategy notes.");
       return;
     }
     setLoading(true);
     setMessage("");
     const form = new FormData();
-    form.append("file", strategyFile);
-    form.append("name", strategyName || strategyFile.name);
+    if (strategyFile) form.append("file", strategyFile);
+    form.append("name", strategyName || strategyFile?.name || "OGFX strategy");
+    if (strategyVideoUrl.trim()) form.append("youtubeUrl", strategyVideoUrl.trim());
+    if (strategyNotes.trim()) form.append("notes", strategyNotes.trim());
     const response = await fetch("/api/ai/parse-strategy", { method: "POST", body: form });
     const payload = await response.json().catch(() => ({}));
-    setMessage(response.ok ? `Strategy uploaded. Preview: ${payload.textPreview}` : payload.error || "Upload failed");
+    setMessage(response.ok ? `Strategy saved. Preview: ${payload.textPreview}${payload.warning ? ` Warning: ${payload.warning}` : ""}` : payload.error || "Upload failed");
+    if (response.ok) {
+      setStrategyFile(null);
+      setStrategyVideoUrl("");
+      setStrategyNotes("");
+    }
     await load();
     setLoading(false);
   }
@@ -188,11 +197,16 @@ export default function DashboardSettingsPage() {
       {tab === "strategy" && (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-white"><FileText className="h-4 w-4 text-cyan-200" /> Strategy upload</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-white"><FileText className="h-4 w-4 text-cyan-200" /> Strategy sources</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <input value={strategyName} onChange={(event) => setStrategyName(event.target.value)} className="h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" />
               <input type="file" accept="application/pdf" onChange={(event) => setStrategyFile(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-300 file:px-4 file:py-2 file:font-semibold file:text-black" />
-              <Button onClick={uploadStrategy} disabled={loading} variant="glass" className="rounded-xl">Upload PDF</Button>
+              <label className="block text-sm text-slate-400">
+                <span className="mb-2 flex items-center gap-2"><Link2 className="h-4 w-4 text-cyan-200" /> YouTube strategy link</span>
+                <input value={strategyVideoUrl} onChange={(event) => setStrategyVideoUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." className="h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" />
+              </label>
+              <textarea value={strategyNotes} onChange={(event) => setStrategyNotes(event.target.value)} placeholder="Optional notes if the video has no captions, or your own refined rules." className="min-h-28 w-full rounded-2xl border border-white/10 bg-black/25 p-3 text-sm text-white outline-none" />
+              <Button onClick={uploadStrategy} disabled={loading} variant="glass" className="rounded-xl">Save strategy</Button>
             </CardContent>
           </Card>
           <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">

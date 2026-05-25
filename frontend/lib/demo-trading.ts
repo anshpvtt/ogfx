@@ -3,7 +3,7 @@ import { fetchYahooCandles } from "@/lib/market-data";
 import type { Candle } from "@/lib/smc-engine";
 import type { StrategyCatalogItem } from "@/lib/strategy-catalog";
 
-export type DemoOrderStatus = "OPEN" | "TP" | "SL" | "CLOSED";
+export type DemoOrderStatus = "OPEN" | "PENDING" | "TP" | "SL" | "CLOSED";
 export type DemoOrderSide = "BUY" | "SELL";
 
 export type DemoOrderRow = {
@@ -13,6 +13,7 @@ export type DemoOrderRow = {
   trading_view_symbol: string | null;
   side: DemoOrderSide;
   entry: number;
+  open_price?: number | null;
   stop_loss: number;
   take_profit: number;
   size: number;
@@ -290,7 +291,7 @@ export async function recalculateDemoAccount(
     .from("demo_orders")
     .select("*")
     .eq("user_id", userId)
-    .eq("status", "OPEN");
+    .in("status", ["OPEN", "open"]);
 
   if (error) throw new Error(error.message);
 
@@ -338,15 +339,24 @@ export async function recalculateDemoAccount(
 
 export async function syncUserOpenOrders(client: SupabaseLike, userId: string, timeframe = "1H") {
   await ensureDemoAccount(client, userId);
+  const { data: pendingOrders, error: pendingError } = await client
+    .from("demo_orders")
+    .select("*")
+    .eq("user_id", userId)
+    .in("status", ["pending", "PENDING"]);
+
+  if (pendingError) throw new Error(pendingError.message);
+
   const { data: openOrders, error } = await client
     .from("demo_orders")
     .select("*")
     .eq("user_id", userId)
-    .eq("status", "OPEN");
+    .in("status", ["OPEN", "open"]);
 
   if (error) throw new Error(error.message);
 
-  const assetIds = Array.from(new Set(((openOrders ?? []) as DemoOrderRow[]).map((order) => order.asset_id)));
+  const watchedOrders = [...((openOrders ?? []) as DemoOrderRow[]), ...((pendingOrders ?? []) as DemoOrderRow[])];
+  const assetIds = Array.from(new Set(watchedOrders.map((order) => order.asset_id)));
   const snapshots: Record<string, DemoMarketSnapshot> = {};
   await Promise.all(
     assetIds.map(async (assetId) => {
@@ -355,6 +365,32 @@ export async function syncUserOpenOrders(client: SupabaseLike, userId: string, t
   );
 
   const closed: Array<{ id: string; status: string; pnl: number }> = [];
+  for (const order of (pendingOrders ?? []) as DemoOrderRow[]) {
+    const latestPrice = snapshots[order.asset_id]?.latest?.close;
+    if (!latestPrice) continue;
+    const referencePrice = Number(order.open_price ?? order.entry);
+    const isStopOrder = order.side === "BUY" ? order.entry >= referencePrice : order.entry <= referencePrice;
+    const shouldOpen = order.side === "BUY"
+      ? isStopOrder
+        ? latestPrice >= order.entry
+        : latestPrice <= order.entry
+      : isStopOrder
+        ? latestPrice <= order.entry
+        : latestPrice >= order.entry;
+    if (!shouldOpen) continue;
+
+    await client
+      .from("demo_orders")
+      .update({
+        status: "OPEN",
+        open_price: order.entry,
+        opened_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id)
+      .eq("user_id", order.user_id);
+  }
+
   for (const order of (openOrders ?? []) as DemoOrderRow[]) {
     const latestPrice = snapshots[order.asset_id]?.latest?.close;
     if (!latestPrice) continue;

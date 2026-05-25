@@ -18,6 +18,7 @@ export default function OnboardingPage() {
   const [pairs, setPairs] = useState<string[]>(["XAUUSD", "EURUSD"]);
   const [file, setFile] = useState<File | null>(null);
   const [strategyName, setStrategyName] = useState("My OGFX Playbook");
+  const [strategyVideoUrl, setStrategyVideoUrl] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -88,14 +89,15 @@ export default function OnboardingPage() {
         updated_at: now,
       }, { onConflict: "user_id" });
 
-      if (file) {
+      if (file || strategyVideoUrl.trim()) {
         const form = new FormData();
-        form.append("file", file);
-        form.append("name", strategyName || file.name);
+        if (file) form.append("file", file);
+        form.append("name", strategyName || file?.name || "My OGFX Playbook");
+        if (strategyVideoUrl.trim()) form.append("youtubeUrl", strategyVideoUrl.trim());
         const response = await fetch("/api/ai/parse-strategy", { method: "POST", body: form });
         if (!response.ok) {
           const payload = await response.json().catch(() => null);
-          throw new Error(payload?.error || "Strategy upload failed");
+          window.sessionStorage.setItem("ogfx:onboarding-warning", payload?.error || "Strategy upload skipped.");
         }
       }
 
@@ -167,6 +169,12 @@ export default function OnboardingPage() {
                   className="mt-4 block w-full text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-300 file:px-4 file:py-2 file:font-semibold file:text-black"
                   onChange={(event) => setFile(event.target.files?.[0] ?? null)}
                 />
+                <input
+                  className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm"
+                  value={strategyVideoUrl}
+                  onChange={(event) => setStrategyVideoUrl(event.target.value)}
+                  placeholder="Optional YouTube strategy link"
+                />
                 {file && <div className="mt-3 text-sm text-emerald-200">{file.name}</div>}
               </div>
             </div>
@@ -184,7 +192,10 @@ export default function OnboardingPage() {
                     max="5"
                     step="0.1"
                     value={riskPercent}
-                    onChange={(event) => setRiskPercent(Number(event.target.value))}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      setRiskPercent(Number.isFinite(value) ? Math.min(5, Math.max(0.1, value)) : 1);
+                    }}
                     className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono"
                   />
                 </label>
@@ -195,7 +206,10 @@ export default function OnboardingPage() {
                     min="100"
                     max="100000000"
                     value={balance}
-                    onChange={(event) => setBalance(Number(event.target.value))}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      setBalance(Number.isFinite(value) ? Math.min(100000000, Math.max(100, value)) : 10000);
+                    }}
                     className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono"
                   />
                 </label>

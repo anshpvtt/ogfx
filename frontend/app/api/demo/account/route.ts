@@ -76,7 +76,7 @@ export async function PATCH(request: NextRequest) {
         updated_at: now,
       })
       .eq("user_id", user.id)
-      .eq("status", "OPEN");
+      .in("status", ["OPEN", "open", "pending", "PENDING"]);
 
     const { data, error } = await supabase
       .from("demo_accounts")

@@ -18,12 +18,11 @@ import {
   MousePointer2,
   PanelRight,
   Play,
+  Plus,
   RefreshCw,
   Settings2,
   ShieldCheck,
   Target,
-  TrendingDown,
-  TrendingUp,
   Wallet,
   X,
   Zap,
@@ -31,7 +30,7 @@ import {
 import { LIVE_CHART_TIMEFRAMES, TRADING_ASSETS } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
 import { LiveSmcChart } from "@/components/charts/LiveSmcChart";
-import { backendJson, chartIntervalToApi } from "@/lib/backend-api";
+import { chartIntervalToApi } from "@/lib/backend-api";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -70,7 +69,7 @@ type AgentDecision = {
   reasons: string[];
   invalidation: string;
   model: string;
-  mode: "gemma" | "openrouter" | "ollama" | "local-demo";
+  mode: "gemma" | "local-demo";
 };
 
 type DemoAccount = {
@@ -102,7 +101,7 @@ type DemoOrder = {
   stop_loss: number;
   take_profit: number;
   size: number;
-  status: "OPEN" | "TP" | "SL" | "CLOSED";
+  status: "OPEN" | "PENDING" | "TP" | "SL" | "CLOSED";
   source: "manual" | "agent" | "agent-cron";
   strategy_name: string | null;
   confidence: number | null;
@@ -151,6 +150,25 @@ function formatMoney(value: number | null | undefined, currency = "USD") {
   }).format(Number(value));
 }
 
+function formatLots(value: number | null | undefined) {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  const amount = Number(value);
+  return amount < 1 ? amount.toFixed(2) : amount.toFixed(2).replace(/\.00$/, "");
+}
+
+function defaultPartialSize(value: number | null | undefined) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  if (amount <= 0.01) return formatLots(amount);
+  return formatLots(Math.max(0.01, Number((amount / 2).toFixed(2))));
+}
+
+function floatingOrderPnl(order: Pick<DemoOrder, "entry" | "side" | "size">, exitPrice: number) {
+  if (!Number.isFinite(exitPrice)) return null;
+  const direction = order.side === "BUY" ? 1 : -1;
+  return Number(((exitPrice - Number(order.entry)) * direction * Number(order.size)).toFixed(2));
+}
+
 function defaultLevels(side: "BUY" | "SELL", snapshot?: MarketSnapshot) {
   const close = Number(snapshot?.latest?.close ?? 0);
   const atr = Number(snapshot?.atr ?? 0);
@@ -167,6 +185,12 @@ function defaultLevels(side: "BUY" | "SELL", snapshot?: MarketSnapshot) {
 function toDemoOrder(order: BackendOrder | DemoOrder): DemoOrder {
   const raw = ("raw" in order ? order.raw ?? {} : order) as Partial<DemoOrder>;
   const status = "status" in order ? String(order.status).toLowerCase() : "open";
+  const mappedStatus =
+    status === "pending" ? "PENDING" :
+    status === "closed" ? "CLOSED" :
+    status === "tp" ? "TP" :
+    status === "sl" ? "SL" :
+    "OPEN";
   return {
     id: order.id,
     asset_id: "asset_id" in order ? order.asset_id : order.symbol,
@@ -176,7 +200,7 @@ function toDemoOrder(order: BackendOrder | DemoOrder): DemoOrder {
     stop_loss: "stop_loss" in order ? Number(order.stop_loss) : Number(order.sl),
     take_profit: "take_profit" in order ? Number(order.take_profit) : Number(order.tp),
     size: "size" in order ? Number(order.size) : Number(order.lotSize),
-    status: status === "closed" ? "CLOSED" : status === "pending" ? "OPEN" : "OPEN",
+    status: mappedStatus,
     source: raw.source ?? "manual",
     strategy_name: raw.strategy_name ?? null,
     confidence: raw.confidence ?? null,
@@ -188,34 +212,11 @@ function toDemoOrder(order: BackendOrder | DemoOrder): DemoOrder {
   };
 }
 
-function decisionFromSignalPayload(payload: any): AgentDecision {
-  const gemma = payload.gemma ?? {};
-  const analysis = payload.analysis ?? {};
-  const direction = payload.confirmed && (gemma.direction === "BUY" || gemma.direction === "SELL")
-    ? gemma.direction
-    : "WAIT";
-  const reason = gemma.reason || analysis.reason || "WAIT - Waiting for clean market snapshot";
-
-  return {
-    decision: direction,
-    confidence: Number(gemma.confidence ?? analysis.confidence ?? 0),
-    entry: Number.isFinite(Number(gemma.entry ?? analysis.entry)) ? Number(gemma.entry ?? analysis.entry) : null,
-    stopLoss: Number.isFinite(Number(gemma.sl ?? analysis.sl)) ? Number(gemma.sl ?? analysis.sl) : null,
-    takeProfit: Number.isFinite(Number(gemma.tp ?? analysis.tp)) ? Number(gemma.tp ?? analysis.tp) : null,
-    riskReward: Number.isFinite(Number(analysis.rr)) ? Number(analysis.rr) : null,
-    bias: String(analysis.bias ?? "NEUTRAL"),
-    summary: direction === "WAIT" ? `WAIT - ${reason}` : reason,
-    reasons: [reason, analysis.structure?.lastBOS ? `BOS: ${analysis.structure.lastBOS.direction}` : "No confirmed BOS yet"].filter(Boolean),
-    invalidation: "Invalid if price closes beyond the protected order-block/FVG extreme.",
-    model: String(gemma.model ?? "gemma-3-27b-it"),
-    mode: gemma.fallback ? "local-demo" : "gemma",
-  };
-}
-
 function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
   const decision = payload?.decision ?? payload?.analysis;
   if (!decision) return null;
   const action = decision.decision ?? decision.bias;
+  const mode = decision.mode === "local-demo" || decision.provider === "local" ? "local-demo" : "gemma";
   return {
     decision: action === "BUY" || action === "SELL" ? action : "WAIT",
     confidence: Number(decision.confidence ?? 0),
@@ -227,22 +228,9 @@ function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
     summary: String(decision.summary ?? decision.reasoning ?? decision.gemma_analysis ?? "WAIT - Waiting for clean market snapshot."),
     reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : Array.isArray(decision.checklist) ? decision.checklist.map((item: any) => `${item.label}: ${item.status}`) : [],
     invalidation: String(decision.invalidation ?? "Invalid if price closes beyond the protected structure."),
-    model: String(decision.model ?? "google/gemma-4-31b-it:free"),
-    mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : decision.mode === "ollama" ? "ollama" : "openrouter",
+    model: String(decision.model ?? (mode === "local-demo" ? "ogfx-smc-fallback" : "gemma-4-26b-a4b-it")),
+    mode,
   };
-}
-
-function warningFromGemma(gemma: any, fallbackWarning?: string) {
-  if (fallbackWarning) return fallbackWarning;
-  if (!gemma?.fallback) return "";
-  const reason = String(gemma.reason || "");
-  if (/rate.?limit|429|free-models-per-day|temporarily/i.test(reason)) {
-    return "OpenRouter free Gemma quota/rate limit is active; OGFX local SMC fallback is being used until the free provider allows requests again.";
-  }
-  if (/key is not configured|key missing|required/i.test(reason)) {
-    return "AI key missing on backend; OGFX local SMC fallback is active.";
-  }
-  return "AI provider unavailable; OGFX local SMC fallback is active.";
 }
 
 function levelPercent(price: number, min: number, max: number) {
@@ -271,6 +259,15 @@ export default function DashboardChartsPage() {
   const [notice, setNotice] = useState("");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
   const [capitalInput, setCapitalInput] = useState("10000");
+  const [orderMode, setOrderMode] = useState<"market" | "pending">("market");
+  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [orderEdit, setOrderEdit] = useState({
+    entry: "",
+    stopLoss: "",
+    takeProfit: "",
+    size: "",
+    closeSize: "",
+  });
   const [ticket, setTicket] = useState({
     side: "BUY" as "BUY" | "SELL",
     entry: "",
@@ -282,15 +279,19 @@ export default function DashboardChartsPage() {
   const activeAsset = TRADING_ASSETS.find((asset) => asset.id === activeAssetId) ?? TRADING_ASSETS[0];
   const activeSnapshot = snapshots[activeAsset.id];
   const openOrders = orders.filter((order) => order.status === "OPEN");
-  const closedOrders = orders.filter((order) => order.status !== "OPEN");
-  const displayedRows = terminalTab === "OPEN" ? openOrders : terminalTab === "CLOSED" ? closedOrders : [];
-  const activeOpenOrders = openOrders.filter((order) => order.asset_id === activeAsset.id);
+  const pendingOrders = orders.filter((order) => order.status === "PENDING");
+  const closedOrders = orders.filter((order) => order.status !== "OPEN" && order.status !== "PENDING");
+  const displayedRows = terminalTab === "OPEN" ? openOrders : terminalTab === "PENDING" ? pendingOrders : closedOrders;
+  const workingOrders = [...openOrders, ...pendingOrders];
+  const activeWorkingOrders = [...openOrders, ...pendingOrders].filter((order) => order.asset_id === activeAsset.id);
+  const selectedOrder = selectedOrderId ? workingOrders.find((order) => order.id === selectedOrderId) ?? null : null;
+  const selectedOrderIsPending = selectedOrder?.status === "PENDING";
   const activeLevelPrices = [
     Number(activeSnapshot?.latest?.close),
     Number(ticket.entry),
     Number(ticket.stopLoss),
     Number(ticket.takeProfit),
-    ...activeOpenOrders.flatMap((order) => [Number(order.entry), Number(order.stop_loss), Number(order.take_profit)]),
+    ...activeWorkingOrders.flatMap((order) => [Number(order.entry), Number(order.stop_loss), Number(order.take_profit)]),
   ].filter((value) => Number.isFinite(value) && value > 0);
   const levelMin = activeLevelPrices.length ? Math.min(...activeLevelPrices) : 0;
   const levelMax = activeLevelPrices.length ? Math.max(...activeLevelPrices) : 0;
@@ -306,6 +307,47 @@ export default function DashboardChartsPage() {
       ask: close ? close + spread / 2 : 0,
     };
   }, [activeSnapshot?.latest?.close, activeSnapshot?.atr]);
+  const ticketEntry = Number(ticket.entry);
+  const ticketStop = Number(ticket.stopLoss);
+  const ticketTarget = Number(ticket.takeProfit);
+  const ticketSize = Number(ticket.size);
+  const ticketRiskPerUnit = Math.abs(ticketEntry - ticketStop);
+  const ticketRewardPerUnit = Math.abs(ticketTarget - ticketEntry);
+  const ticketRisk = Number((ticketRiskPerUnit * (Number.isFinite(ticketSize) ? ticketSize : 0)).toFixed(2));
+  const ticketReward = Number((ticketRewardPerUnit * (Number.isFinite(ticketSize) ? ticketSize : 0)).toFixed(2));
+  const ticketMargin = Number((Math.max(0, ticketEntry * (Number.isFinite(ticketSize) ? ticketSize : 0)) * 0.01).toFixed(2));
+  const ticketRr = ticketRiskPerUnit > 0 ? Number((ticketRewardPerUnit / ticketRiskPerUnit).toFixed(2)) : 0;
+  const ticketValid =
+    Number.isFinite(ticketEntry) &&
+    Number.isFinite(ticketStop) &&
+    Number.isFinite(ticketTarget) &&
+    Number.isFinite(ticketSize) &&
+    ticketSize > 0 &&
+    (ticket.side === "BUY" ? ticketStop < ticketEntry && ticketTarget > ticketEntry : ticketStop > ticketEntry && ticketTarget < ticketEntry);
+  const editEntry = Number(selectedOrderIsPending ? orderEdit.entry : selectedOrder?.entry);
+  const editStop = Number(orderEdit.stopLoss);
+  const editTarget = Number(orderEdit.takeProfit);
+  const editSize = Number(orderEdit.size);
+  const editCloseSize = Number(orderEdit.closeSize);
+  const editValid = Boolean(
+    selectedOrder &&
+      Number.isFinite(editEntry) &&
+      Number.isFinite(editStop) &&
+      Number.isFinite(editTarget) &&
+      Number.isFinite(editSize) &&
+      editSize > 0 &&
+      (selectedOrder.side === "BUY" ? editStop < editEntry && editTarget > editEntry : editStop > editEntry && editTarget < editEntry)
+  );
+  const closeSizeValid = Boolean(
+    selectedOrder &&
+      selectedOrder.status === "OPEN" &&
+      Number.isFinite(editCloseSize) &&
+      editCloseSize > 0 &&
+      editCloseSize < Number(selectedOrder.size)
+  );
+  const selectedExitPrice = selectedOrder?.side === "SELL" ? bidAsk.ask : bidAsk.bid;
+  const selectedFloatingPnl =
+    selectedOrder && selectedOrder.status === "OPEN" ? floatingOrderPnl(selectedOrder, selectedExitPrice) : null;
   const statusCards = [
     { label: "Live provider", value: "TradingView", detail: "clean chart default", icon: ShieldCheck },
     {
@@ -390,54 +432,70 @@ export default function DashboardChartsPage() {
       ...current,
       size: settings?.default_size ? String(settings.default_size) : current.size,
       ...defaultLevels(current.side, activeSnapshot),
+      entry: orderMode === "market"
+        ? formatPrice(current.side === "BUY" ? bidAsk.ask : bidAsk.bid)
+        : current.entry || defaultLevels(current.side, activeSnapshot).entry,
     }));
-  }, [activeAsset.id, activeSnapshot?.latest?.time, settings?.default_size]);
+  }, [activeAsset.id, activeSnapshot?.latest?.time, settings?.default_size, orderMode, bidAsk.ask, bidAsk.bid]);
+
+  useEffect(() => {
+    if (!selectedOrder) {
+      setOrderEdit({ entry: "", stopLoss: "", takeProfit: "", size: "", closeSize: "" });
+      return;
+    }
+
+    setOrderEdit({
+      entry: formatPrice(selectedOrder.entry),
+      stopLoss: formatPrice(selectedOrder.stop_loss),
+      takeProfit: formatPrice(selectedOrder.take_profit),
+      size: formatLots(selectedOrder.size),
+      closeSize: defaultPartialSize(selectedOrder.size),
+    });
+  }, [selectedOrder?.id, selectedOrder?.size, selectedOrder?.status]);
 
   async function runAgent(forceAi = false) {
     if (!userId) {
       setAgentWarning("Authentication required before analysis.");
       return;
     }
+    if (!activeSnapshot?.latest) {
+      setAgentWarning("Waiting for a live market snapshot before analysis.");
+      return;
+    }
     setAgentLoading(true);
     setAgentWarning("");
 
     try {
-      const payload = await backendJson<any>("/api/signal/generate", {
+      const chartImage = agentImage || nativeChartImage;
+      const response = await fetch("/api/ai/analyze", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: activeAsset.id,
+          pair: activeAsset.id,
           timeframe: chartIntervalToApi(interval.value),
-          userId,
+          snapshot: activeSnapshot,
+          imageDataUrl: chartImage || undefined,
+          account,
+          settings,
+          openOrders: openOrders.slice(0, 20),
+          pendingOrders: pendingOrders.slice(0, 20),
+          activeOrder: selectedOrder,
+          history: closedOrders.slice(0, 20),
+          saveSignal: forceAi,
+          strategyLogic: {
+            source: chartImage ? (agentImage ? "Attached chart image" : "Live chart capture") : "Structured live snapshot",
+            rule: "Use ANFX LSBR plus Shakuni trap logic: liquidity sweep, BOS/MSS/CHOCH, displacement, retest into OB/FVG/supply/demand, HTF bias, no entry without numeric TP/SL, and respect account capital/open exposure.",
+          },
         }),
       });
-      let nextDecision = decisionFromSignalPayload(payload);
-      let nextWarning = warningFromGemma(payload.gemma);
+      const raw = await response.text();
+      const payload = raw ? JSON.parse(raw) : {};
+      if (!response.ok) throw new Error(payload.error || "Chart analysis failed");
 
-      const chartImage = agentImage || nativeChartImage;
-      if ((forceAi || chartImage) && activeSnapshot?.latest) {
-        const response = await fetch("/api/ai/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pair: activeAsset.id,
-            timeframe: chartIntervalToApi(interval.value),
-            snapshot: activeSnapshot,
-            imageDataUrl: chartImage || undefined,
-            strategyLogic: {
-              source: agentImage ? "Live Charts attached screenshot" : "Live Charts native capture",
-              rule: "Use OGFX SMC confluence: liquidity sweep, BOS/MSS/CHOCH, order block, FVG, HTF bias, and TP/SL risk preservation.",
-            },
-          }),
-        });
-        const raw = await response.text();
-        const imagePayload = raw ? JSON.parse(raw) : {};
-        if (!response.ok) throw new Error(imagePayload.error || "Chart image analysis failed");
-        nextDecision = decisionFromAnalyzePayload(imagePayload) ?? nextDecision;
-        nextWarning = imagePayload.analysis?.warning || imagePayload.warning || "";
-      }
-
+      const nextDecision = decisionFromAnalyzePayload(payload);
+      if (!nextDecision) throw new Error("Chart analysis returned no decision");
       setAgentDecision(nextDecision);
-      setAgentWarning(nextWarning);
+      setAgentWarning(payload.analysis?.warning || payload.warning || "");
     } catch (error) {
       setAgentWarning(error instanceof Error ? error.message : "Agent analysis failed");
     } finally {
@@ -454,11 +512,20 @@ export default function DashboardChartsPage() {
   }, [activeAsset.id, interval.value, userId]);
 
   function updateTicketSide(side: "BUY" | "SELL") {
+    const next = defaultLevels(side, activeSnapshot);
     setTicket((current) => ({
       ...current,
       side,
-      ...defaultLevels(side, activeSnapshot),
+      ...next,
+      entry: orderMode === "market" ? formatPrice(side === "BUY" ? bidAsk.ask : bidAsk.bid) : next.entry,
     }));
+  }
+
+  function stepSize(delta: number) {
+    setTicket((current) => {
+      const next = Math.max(0.01, Number(current.size || 0) + delta);
+      return { ...current, size: next.toFixed(next < 1 ? 2 : 2).replace(/\.00$/, "") };
+    });
   }
 
   async function openFullscreenChart() {
@@ -481,6 +548,20 @@ export default function DashboardChartsPage() {
       stopLoss: formatPrice(agentDecision.stopLoss),
       takeProfit: formatPrice(agentDecision.takeProfit),
     }));
+  }
+
+  function selectOrder(order: DemoOrder) {
+    setSelectedOrderId(order.id);
+    if (TRADING_ASSETS.some((asset) => asset.id === order.asset_id)) {
+      setActiveAssetId(order.asset_id);
+    }
+    setOrderEdit({
+      entry: formatPrice(order.entry),
+      stopLoss: formatPrice(order.stop_loss),
+      takeProfit: formatPrice(order.take_profit),
+      size: formatLots(order.size),
+      closeSize: defaultPartialSize(order.size),
+    });
   }
 
   function attachAgentImage(file?: File) {
@@ -542,6 +623,15 @@ export default function DashboardChartsPage() {
       setNotice("Authentication required before placing demo orders.");
       return;
     }
+    if (!ticketValid) {
+      setNotice("Fix volume, entry, stop loss, and take profit before placing this demo order.");
+      return;
+    }
+
+    const executionEntry = orderMode === "market"
+      ? Number(ticket.side === "BUY" ? bidAsk.ask : bidAsk.bid)
+      : Number(ticket.entry);
+
     try {
       const response = await fetch("/api/demo/orders", {
         method: "POST",
@@ -550,9 +640,11 @@ export default function DashboardChartsPage() {
           assetId: activeAsset.id,
           side: ticket.side,
           size: Number(ticket.size),
-          entry: Number(ticket.entry),
+          entry: executionEntry,
           stopLoss: Number(ticket.stopLoss),
           takeProfit: Number(ticket.takeProfit),
+          orderType: orderMode,
+          currentPrice: Number(activeSnapshot?.latest?.close ?? executionEntry),
           source: agentDecision?.decision === ticket.side ? "agent" : "manual",
           confidence: agentDecision?.decision === ticket.side ? agentDecision.confidence : null,
           reason: agentDecision?.decision === ticket.side ? agentDecision.summary : null,
@@ -563,14 +655,50 @@ export default function DashboardChartsPage() {
 
       setOrders((current) => [toDemoOrder(payload.order), ...current]);
       setAccount(payload.account);
-      setTerminalTab("OPEN");
-      setNotice(`Place demo ${ticket.side} succeeded.`);
+      setSelectedOrderId(payload.order.id);
+      setTerminalTab(orderMode === "pending" ? "PENDING" : "OPEN");
+      setNotice(`${orderMode === "pending" ? "Pending" : "Market"} demo ${ticket.side} order placed.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to place demo order");
     }
   }
 
-  async function closeOrder(orderId: string) {
+  async function modifySelectedOrder() {
+    if (!selectedOrder) return;
+    if (!userId) {
+      setNotice("Authentication required before modifying demo orders.");
+      return;
+    }
+    if (!editValid) {
+      setNotice("Fix entry, stop loss, take profit, and size before modifying this order.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/demo/orders/${selectedOrder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entry: Number(orderEdit.entry),
+          stopLoss: Number(orderEdit.stopLoss),
+          takeProfit: Number(orderEdit.takeProfit),
+          size: Number(orderEdit.size),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Failed to modify order");
+
+      const updated = toDemoOrder(payload.order);
+      setOrders((current) => current.map((order) => (order.id === updated.id ? updated : order)));
+      setAccount(payload.account);
+      setSelectedOrderId(updated.id);
+      setNotice("Order levels updated.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to modify order");
+    }
+  }
+
+  async function closeOrder(orderId: string, closeSize?: number) {
     if (!userId) {
       setNotice("Authentication required before closing demo orders.");
       return;
@@ -579,12 +707,18 @@ export default function DashboardChartsPage() {
       const response = await fetch(`/api/demo/orders/${orderId}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exitPrice: activeSnapshot?.latest?.close ?? bidAsk.bid }),
+        body: JSON.stringify({ closeSize }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Failed to close order");
       await loadDemoAccount();
-      setNotice("Order closed and capital synced.");
+      if (payload.closed?.partial) {
+        setSelectedOrderId(orderId);
+        setNotice(`Partially closed ${formatLots(payload.closed.closedSize)} lots and synced capital.`);
+      } else {
+        setSelectedOrderId("");
+        setNotice("Order closed or cancelled and capital synced.");
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to close order");
     }
@@ -756,7 +890,132 @@ export default function DashboardChartsPage() {
                   </div>
                 </div>
               ))}
+              {activeWorkingOrders.map((order) => (
+                <div
+                  key={order.id}
+                  className="absolute left-0 right-0"
+                  style={{ top: `${levelPercent(order.entry, chartLevelMin, chartLevelMax)}%` }}
+                >
+                  <div className={cn("border-t", order.status === "PENDING" ? "border-dashed border-amber-200/70" : "border-cyan-200/70")} />
+                  <div className={cn(
+                    "absolute left-3 -mt-3 rounded px-2 py-1 text-[10px] font-black shadow-lg",
+                    order.status === "PENDING" ? "bg-amber-200 text-slate-950" : "bg-cyan-200 text-slate-950",
+                    selectedOrder?.id === order.id && "ring-2 ring-white"
+                  )}>
+                    {order.status === "PENDING" ? "Pending" : "Open"} {order.side} {formatPrice(order.entry)}
+                  </div>
+                </div>
+              ))}
             </div>
+            {selectedOrder ? (
+              <div className="absolute left-4 top-16 z-20 w-[min(380px,calc(100%-2rem))] overflow-hidden rounded-xl border border-white/15 bg-[#111c24]/95 shadow-2xl backdrop-blur">
+                <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-black text-white">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeAsset.color }} />
+                      {selectedOrder.asset_id} {formatLots(selectedOrder.size)} lots
+                    </div>
+                    <div className={cn("mt-1 text-xs font-semibold", selectedOrder.side === "BUY" ? "text-cyan-200" : "text-red-200")}>
+                      {selectedOrder.status === "PENDING" ? `Pending ${selectedOrder.side}` : selectedOrder.side} at {formatPrice(selectedOrder.entry)}
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    {selectedOrder.status === "OPEN" ? (
+                      <div className={cn("font-mono text-sm font-black", (selectedFloatingPnl ?? 0) >= 0 ? "text-emerald-300" : "text-red-300")}>
+                        {formatMoney(selectedFloatingPnl, account?.currency ?? "USD")}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOrderId("")}
+                      className="grid h-7 w-7 place-items-center rounded text-slate-400 hover:bg-white/10 hover:text-white"
+                      aria-label="Close order editor"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 border-b border-white/10 bg-black/20 text-xs font-bold text-slate-400">
+                  <button type="button" className="h-10 bg-white/10 text-white">Modify</button>
+                  <button
+                    type="button"
+                    onClick={() => closeSizeValid && closeOrder(selectedOrder.id, Number(orderEdit.closeSize))}
+                    disabled={!closeSizeValid}
+                    className="h-10 transition-colors hover:text-white disabled:opacity-40"
+                  >
+                    Partial close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeOrder(selectedOrder.id)}
+                    className="h-10 transition-colors hover:text-white"
+                  >
+                    {selectedOrder.status === "PENDING" ? "Cancel" : "Close"}
+                  </button>
+                </div>
+
+                <div className="space-y-3 p-4">
+                  {selectedOrderIsPending ? (
+                    <label className="block text-xs font-semibold text-slate-400">
+                      Pending entry
+                      <input
+                        value={orderEdit.entry}
+                        onChange={(event) => setOrderEdit((current) => ({ ...current, entry: event.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 font-mono text-sm text-white outline-none focus:border-cyan-300/40"
+                        inputMode="decimal"
+                      />
+                    </label>
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block text-xs font-semibold text-slate-400">
+                      Take profit
+                      <input
+                        value={orderEdit.takeProfit}
+                        onChange={(event) => setOrderEdit((current) => ({ ...current, takeProfit: event.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 font-mono text-sm text-emerald-100 outline-none focus:border-cyan-300/40"
+                        inputMode="decimal"
+                      />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-400">
+                      Stop loss
+                      <input
+                        value={orderEdit.stopLoss}
+                        onChange={(event) => setOrderEdit((current) => ({ ...current, stopLoss: event.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 font-mono text-sm text-red-100 outline-none focus:border-cyan-300/40"
+                        inputMode="decimal"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block text-xs font-semibold text-slate-400">
+                      {selectedOrderIsPending ? "Volume" : "Close volume"}
+                      <input
+                        value={selectedOrderIsPending ? orderEdit.size : orderEdit.closeSize}
+                        onChange={(event) => {
+                          const key = selectedOrderIsPending ? "size" : "closeSize";
+                          setOrderEdit((current) => ({ ...current, [key]: event.target.value }));
+                        }}
+                        className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 font-mono text-sm text-white outline-none focus:border-cyan-300/40"
+                        inputMode="decimal"
+                      />
+                    </label>
+                    <div className="rounded-lg bg-black/25 p-3 text-xs">
+                      <div className="text-slate-500">Current price</div>
+                      <div className="mt-1 font-mono font-black text-white">{formatPrice(selectedExitPrice)}</div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={modifySelectedOrder}
+                    disabled={!editValid}
+                    className="h-11 w-full rounded-lg bg-amber-300 font-black text-slate-950 hover:bg-amber-200"
+                  >
+                    Modify position
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <div className="absolute bottom-4 left-4 z-10 w-[min(360px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#05080c]/92 shadow-2xl backdrop-blur">
               <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-slate-400">
                 <span>AI capture chart</span>
@@ -850,7 +1109,7 @@ export default function DashboardChartsPage() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm font-bold text-white">
                   <Bot className="h-4 w-4 text-cyan-200" />
-                  Gemma vision analyst
+                  Google AI analyst
                 </div>
                 <Button type="button" size="sm" variant="glass" onClick={() => runAgent(true)} disabled={agentLoading} className="h-8 rounded-lg">
                   {agentLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
@@ -902,53 +1161,154 @@ export default function DashboardChartsPage() {
             </div>
 
             <div className="p-4">
-              <div className="mb-3 flex items-center gap-2 text-sm font-bold text-white">
-                <CircleDollarSign className="h-4 w-4 text-amber-200" />
-                New order
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {(["BUY", "SELL"] as const).map((side) => (
-                  <button
-                    key={side}
-                    type="button"
-                    onClick={() => updateTicketSide(side)}
-                    className={cn(
-                      "flex h-12 items-center justify-center gap-2 rounded-xl border text-sm font-black transition-colors",
-                      ticket.side === side
-                        ? side === "BUY"
-                          ? "border-emerald-300/35 bg-emerald-300/15 text-emerald-100"
-                          : "border-red-300/35 bg-red-300/15 text-red-100"
-                        : "border-white/10 bg-black/20 text-slate-400 hover:text-white"
-                    )}
-                  >
-                    {side === "BUY" ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                    {side}
-                  </button>
-                ))}
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-bold text-white">
+                  <CircleDollarSign className="h-4 w-4 text-amber-200" />
+                  New order
+                </div>
+                <span className={cn(
+                  "rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em]",
+                  ticketValid ? "bg-emerald-300/15 text-emerald-100" : "bg-amber-300/10 text-amber-100"
+                )}>
+                  {ticketValid ? "Ready" : "Check levels"}
+                </span>
               </div>
 
-              <div className="mt-3 grid gap-2">
-                {[
-                  ["entry", "Entry"],
-                  ["stopLoss", "Stop loss"],
-                  ["takeProfit", "Take profit"],
-                  ["size", "Lot size"],
-                ].map(([key, label]) => (
-                  <label key={key} className="block text-xs text-slate-500">
-                    {label}
+              <div className="rounded-xl border border-white/10 bg-black/20 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] text-slate-500">
+                  <span>{activeAsset.name}</span>
+                  <span>Regular demo form</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateTicketSide("SELL")}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-colors",
+                      ticket.side === "SELL"
+                        ? "border-red-300/45 bg-red-400/15"
+                        : "border-white/10 bg-white/[0.03] hover:border-red-300/25"
+                    )}
+                  >
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-300">Sell</div>
+                    <div className="mt-1 font-mono text-lg font-black text-red-100">{formatPrice(bidAsk.bid)}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateTicketSide("BUY")}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-colors",
+                      ticket.side === "BUY"
+                        ? "border-cyan-300/45 bg-cyan-300/15"
+                        : "border-white/10 bg-white/[0.03] hover:border-cyan-300/25"
+                    )}
+                  >
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">Buy</div>
+                    <div className="mt-1 font-mono text-lg font-black text-cyan-50">{formatPrice(bidAsk.ask)}</div>
+                  </button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 rounded-lg border border-white/10 bg-[#0c151c] p-1">
+                  {(["market", "pending"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setOrderMode(mode)}
+                      className={cn(
+                        "h-9 rounded-md text-xs font-bold capitalize transition-colors",
+                        orderMode === mode ? "bg-white/10 text-white" : "text-slate-500 hover:text-white"
+                      )}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 space-y-3">
+                  <label className="block text-xs font-semibold text-slate-400">
+                    Volume
+                    <div className="mt-1 grid grid-cols-[1fr_auto_auto] overflow-hidden rounded-lg border border-white/10 bg-black/25">
+                      <input
+                        value={ticket.size}
+                        onChange={(event) => setTicket((current) => ({ ...current, size: event.target.value }))}
+                        className="h-10 min-w-0 bg-transparent px-3 font-mono text-sm text-white outline-none"
+                        inputMode="decimal"
+                      />
+                      <span className="grid h-10 place-items-center px-3 text-[10px] uppercase tracking-[0.16em] text-slate-500">Lots</span>
+                      <div className="flex border-l border-white/10">
+                        <button type="button" onClick={() => stepSize(-0.01)} className="grid h-10 w-9 place-items-center text-slate-400 hover:text-white" aria-label="Decrease lot size">
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => stepSize(0.01)} className="grid h-10 w-9 place-items-center border-l border-white/10 text-slate-400 hover:text-white" aria-label="Increase lot size">
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="block text-xs font-semibold text-slate-400">
+                    {orderMode === "market" ? "Execution price" : "Pending entry"}
                     <input
-                      value={ticket[key as keyof typeof ticket]}
-                      onChange={(event) => setTicket((current) => ({ ...current, [key]: event.target.value }))}
-                      className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none focus:border-cyan-300/40"
+                      value={ticket.entry}
+                      onChange={(event) => setTicket((current) => ({ ...current, entry: event.target.value }))}
+                      disabled={orderMode === "market"}
+                      className={cn(
+                        "mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none focus:border-cyan-300/40",
+                        orderMode === "market" && "cursor-not-allowed text-slate-400"
+                      )}
                       inputMode="decimal"
                     />
                   </label>
-                ))}
+
+                  {[
+                    ["stopLoss", "Stop loss", "text-red-200"],
+                    ["takeProfit", "Take profit", "text-emerald-200"],
+                  ].map(([key, label, tone]) => (
+                    <label key={key} className="block text-xs font-semibold text-slate-400">
+                      {label}
+                      <input
+                        value={ticket[key as keyof typeof ticket]}
+                        onChange={(event) => setTicket((current) => ({ ...current, [key]: event.target.value }))}
+                        className={cn("mt-1 h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 font-mono text-sm outline-none focus:border-cyan-300/40", tone)}
+                        inputMode="decimal"
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg bg-white/[0.04] p-2">
+                    <div className="text-slate-500">Margin</div>
+                    <div className="mt-1 font-mono text-white">{formatMoney(ticketMargin, account?.currency ?? "USD")}</div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.04] p-2">
+                    <div className="text-slate-500">R:R</div>
+                    <div className="mt-1 font-mono text-white">{ticketRr ? `1:${ticketRr}` : "-"}</div>
+                  </div>
+                  <div className="rounded-lg bg-red-400/[0.06] p-2">
+                    <div className="text-slate-500">Est risk</div>
+                    <div className="mt-1 font-mono text-red-100">{formatMoney(ticketRisk, account?.currency ?? "USD")}</div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-300/[0.06] p-2">
+                    <div className="text-slate-500">Est reward</div>
+                    <div className="mt-1 font-mono text-emerald-100">{formatMoney(ticketReward, account?.currency ?? "USD")}</div>
+                  </div>
+                </div>
               </div>
 
-              <Button type="button" onClick={placeOrder} className="mt-4 h-12 w-full rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">
+              <Button
+                type="button"
+                onClick={placeOrder}
+                disabled={!ticketValid}
+                className={cn(
+                  "mt-4 h-12 w-full rounded-xl text-slate-950",
+                  ticket.side === "BUY"
+                    ? "bg-cyan-300 hover:bg-cyan-200"
+                    : "bg-red-300 hover:bg-red-200"
+                )}
+              >
                 <Play className="mr-2 h-4 w-4" />
-                Place demo {ticket.side}
+                Place {orderMode} {ticket.side}
               </Button>
 
               <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
@@ -987,7 +1347,7 @@ export default function DashboardChartsPage() {
             <div className="flex">
               {[
                 ["OPEN", `Open ${openOrders.length}`],
-                ["PENDING", "Pending 0"],
+                ["PENDING", `Pending ${pendingOrders.length}`],
                 ["CLOSED", `Closed ${closedOrders.length}`],
               ].map(([key, label]) => (
                 <button
@@ -1036,7 +1396,7 @@ export default function DashboardChartsPage() {
                       <td className={cn("px-4 py-3 font-bold", order.side === "BUY" ? "text-emerald-300" : "text-red-300")}>
                         {order.side}
                       </td>
-                      <td className="px-4 py-3 font-mono">{formatPrice(order.size)}</td>
+                      <td className="px-4 py-3 font-mono">{formatLots(order.size)}</td>
                       <td className="px-4 py-3 font-mono">{formatPrice(order.entry)}</td>
                       <td className="px-4 py-3 font-mono text-red-300">{formatPrice(order.stop_loss)}</td>
                       <td className="px-4 py-3 font-mono text-emerald-300">{formatPrice(order.take_profit)}</td>
@@ -1045,14 +1405,28 @@ export default function DashboardChartsPage() {
                         {order.pnl == null ? "-" : formatMoney(order.pnl, account?.currency ?? "USD")}
                       </td>
                       <td className="px-4 py-3">
-                        {order.status === "OPEN" ? (
-                          <button
-                            type="button"
-                            onClick={() => closeOrder(order.id)}
-                            className="rounded border border-white/10 px-2 py-1 text-slate-400 transition-colors hover:border-white/20 hover:text-white"
-                          >
-                            Close
-                          </button>
+                        {order.status === "OPEN" || order.status === "PENDING" ? (
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => selectOrder(order)}
+                              className={cn(
+                                "rounded border px-2 py-1 transition-colors hover:border-cyan-300/30 hover:text-white",
+                                selectedOrder?.id === order.id
+                                  ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100"
+                                  : "border-white/10 text-slate-400"
+                              )}
+                            >
+                              Modify
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => closeOrder(order.id)}
+                              className="rounded border border-white/10 px-2 py-1 text-slate-400 transition-colors hover:border-white/20 hover:text-white"
+                            >
+                              {order.status === "PENDING" ? "Cancel" : "Close"}
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-slate-600">-</span>
                         )}
@@ -1063,7 +1437,7 @@ export default function DashboardChartsPage() {
               </table>
             ) : (
               <div className="flex min-h-28 items-center justify-center text-sm text-slate-500">
-                {terminalTab === "PENDING" ? "Pending orders are not enabled yet." : "No orders in this tab."}
+                {terminalTab === "PENDING" ? "No pending orders in this tab." : "No orders in this tab."}
               </div>
             )}
           </div>

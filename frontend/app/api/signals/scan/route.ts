@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
   if (profileError) return NextResponse.json({ error: profileError.message }, { status: 500 });
 
-  const symbols = TRADING_ASSET_IDS.filter((id) => ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "NAS100", "SPX500"].includes(id));
+  const symbols = TRADING_ASSET_IDS;
   const results: any[] = [];
 
   for (const profile of profiles ?? []) {
@@ -91,10 +91,16 @@ export async function GET(request: NextRequest) {
 
         const smc = runSmcEngine(candles.slice(-140), pair, timeframe);
         const snapshot = snapshotFromCandles(pair, timeframe, candles);
+        const { data: settings } = await supabase
+          .from("demo_account_settings")
+          .select("auto_trading_enabled,balance,equity,free_margin,default_size,risk_per_trade,max_open_trades,watched_assets")
+          .eq("user_id", profile.id)
+          .maybeSingle();
         const message = [
           `Cron scan pair: ${pair}`,
           `TradingView symbol: ${asset.tradingViewSymbol}`,
           `Timeframe: ${timeframe}`,
+          `User capital and risk settings: ${JSON.stringify(settings ?? null).slice(0, 2500)}`,
           `Snapshot: ${JSON.stringify(snapshot).slice(0, 9000)}`,
           `SMC engine: ${JSON.stringify(smc).slice(0, 7000)}`,
           `Candles: ${JSON.stringify(candles.slice(-80)).slice(0, 8000)}`,
@@ -147,12 +153,6 @@ export async function GET(request: NextRequest) {
           .maybeSingle();
 
         let autoOrder = null;
-        const { data: settings } = await supabase
-          .from("demo_account_settings")
-          .select("auto_trading_enabled,balance,equity,free_margin,default_size")
-          .eq("user_id", profile.id)
-          .maybeSingle();
-
         if (
           signal &&
           tier === "elite" &&

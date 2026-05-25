@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
   const stopLoss = Number(body?.stopLoss);
   const takeProfit = Number(body?.takeProfit);
   const size = Number(body?.size);
+  const orderType = body?.orderType === "pending" ? "pending" : "market";
+  const currentPrice = Number(body?.currentPrice ?? entry);
 
   if (!asset || ![entry, stopLoss, takeProfit, size].every(Number.isFinite) || size <= 0) {
     return NextResponse.json({ error: "Invalid order ticket" }, { status: 400 });
@@ -54,12 +56,12 @@ export async function POST(request: NextRequest) {
         side,
         entry_price: entry,
         entry,
-        open_price: entry,
+        open_price: orderType === "pending" && Number.isFinite(currentPrice) ? currentPrice : entry,
         stop_loss: stopLoss,
         take_profit: takeProfit,
         lot_size: size,
         size,
-        status: "OPEN",
+        status: orderType === "pending" ? "pending" : "OPEN",
         source: body?.source === "agent" ? "agent" : "manual",
         strategy_id: body?.strategyId ?? null,
         strategy_name: body?.strategyName ?? null,
@@ -70,7 +72,9 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) throw new Error(error.message);
-    const syncedAccount = await recalculateDemoAccount(supabase, user.id);
+    const syncedAccount = orderType === "pending"
+      ? account
+      : await recalculateDemoAccount(supabase, user.id);
 
     return NextResponse.json({ order: data, account: syncedAccount });
   } catch (error: any) {
