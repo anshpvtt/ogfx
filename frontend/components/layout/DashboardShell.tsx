@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
+  Bot,
   CandlestickChart,
   History,
   LayoutDashboard,
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/charts", label: "Live Charts", icon: LineChart },
   { href: "/dashboard/signals", label: "Signals", icon: Signal },
   { href: "/dashboard/backtest", label: "Backtest", icon: BarChart3 },
+  { href: "/dashboard/ai-coach", label: "AI Coach", icon: Bot },
   { href: "/dashboard/history", label: "History", icon: History },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

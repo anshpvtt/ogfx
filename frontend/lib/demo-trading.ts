@@ -245,6 +245,7 @@ export async function closeDemoOrder(
     .update({
       status,
       exit_price: exitPrice,
+      close_price: exitPrice,
       pnl,
       closed_at: closedAt,
       updated_at: closedAt,
@@ -321,6 +322,17 @@ export async function recalculateDemoAccount(
     .single();
 
   if (updateError) throw new Error(updateError.message);
+  await client
+    .from("demo_account_settings")
+    .upsert({
+      user_id: userId,
+      balance,
+      equity,
+      margin: Number(margin.toFixed(2)),
+      free_margin: freeMargin,
+      margin_level: marginLevel,
+      updated_at: updatedAt,
+    }, { onConflict: "user_id" });
   return data;
 }
 

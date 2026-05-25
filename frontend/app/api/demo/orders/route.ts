@@ -46,12 +46,18 @@ export async function POST(request: NextRequest) {
       .from("demo_orders")
       .insert({
         user_id: user.id,
+        symbol: asset.id,
+        pair: asset.id,
         asset_id: asset.id,
         trading_view_symbol: asset.tradingViewSymbol,
+        direction: side,
         side,
+        entry_price: entry,
         entry,
+        open_price: entry,
         stop_loss: stopLoss,
         take_profit: takeProfit,
+        lot_size: size,
         size,
         status: "OPEN",
         source: body?.source === "agent" ? "agent" : "manual",

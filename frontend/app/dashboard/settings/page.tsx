@@ -1,31 +1,60 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CreditCard, FileText, Loader2, Save, Shield } from "lucide-react";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
+type Tab = "profile" | "strategy" | "demo" | "subscription";
+
 export default function DashboardSettingsPage() {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [tab, setTab] = useState<Tab>("profile");
+  const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
+  const [settings, setSettings] = useState<any>(null);
+  const [strategies, setStrategies] = useState<any[]>([]);
+  const [strategyFile, setStrategyFile] = useState<File | null>(null);
+  const [strategyName, setStrategyName] = useState("OGFX Playbook");
+  const [startingBalance, setStartingBalance] = useState(10000);
+  const [riskPerTrade, setRiskPerTrade] = useState(1);
+  const [defaultSize, setDefaultSize] = useState(1);
+
+  async function load() {
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
+    if (!user) return;
+    setUserId(user.id);
+    setEmail(user.email ?? "");
+    setWebhookUrl((user.user_metadata?.discord_webhook_url as string) ?? "");
+
+    const [{ data: profileRow }, { data: settingsRow }, { data: strategyRows }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
+      supabase.from("demo_account_settings").select("*").eq("user_id", user.id).maybeSingle(),
+      supabase.from("user_strategies").select("id,name,description,is_active,created_at").eq("user_id", user.id).order("created_at", { ascending: false }),
+    ]);
+    setProfile(profileRow);
+    setSettings(settingsRow);
+    setStrategies(strategyRows ?? []);
+    setStartingBalance(Number(settingsRow?.balance ?? profileRow?.demo_balance ?? 10000));
+    setRiskPerTrade(Number(profileRow?.risk_percent ?? (Number(settingsRow?.risk_per_trade ?? 0.01) * 100)));
+    setDefaultSize(Number(settingsRow?.default_size ?? 1));
+  }
 
   useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? "");
-      setWebhookUrl((data.user?.user_metadata?.discord_webhook_url as string) ?? "");
-    });
+    load();
   }, []);
 
   async function saveAccount() {
     setLoading(true);
     setMessage("");
-    const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.auth.updateUser({
       email,
       ...(password ? { password } : {}),
@@ -33,6 +62,83 @@ export default function DashboardSettingsPage() {
     });
     setMessage(error ? error.message : "Settings saved. Email changes may require verification.");
     setLoading(false);
+  }
+
+  async function uploadStrategy() {
+    if (!strategyFile) {
+      setMessage("Choose a PDF strategy first.");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    const form = new FormData();
+    form.append("file", strategyFile);
+    form.append("name", strategyName || strategyFile.name);
+    const response = await fetch("/api/ai/parse-strategy", { method: "POST", body: form });
+    const payload = await response.json().catch(() => ({}));
+    setMessage(response.ok ? `Strategy uploaded. Preview: ${payload.textPreview}` : payload.error || "Upload failed");
+    await load();
+    setLoading(false);
+  }
+
+  async function setActiveStrategy(id: string) {
+    setLoading(true);
+    await supabase.from("user_strategies").update({ is_active: false }).eq("user_id", userId);
+    const { error } = await supabase.from("user_strategies").update({ is_active: true }).eq("id", id).eq("user_id", userId);
+    setMessage(error ? error.message : "Active strategy updated.");
+    await load();
+    setLoading(false);
+  }
+
+  async function saveDemo() {
+    setLoading(true);
+    setMessage("");
+    await supabase.from("profiles").update({
+      demo_balance: startingBalance,
+      demo_equity: startingBalance,
+      risk_percent: riskPerTrade,
+      updated_at: new Date().toISOString(),
+    }).eq("id", userId);
+
+    await fetch("/api/demo/account", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initialBalance: startingBalance }),
+    });
+
+    const response = await fetch("/api/demo/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        autoTradingEnabled: Boolean(settings?.auto_trading_enabled),
+        riskPerTrade: riskPerTrade / 100,
+        maxOpenTrades: Number(settings?.max_open_trades ?? 5),
+        defaultSize,
+        watchedAssets: settings?.watched_assets ?? ["XAUUSD", "EURUSD"],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    setMessage(response.ok ? "Demo account settings saved." : payload.error || "Demo settings failed");
+    await load();
+    setLoading(false);
+  }
+
+  async function checkout(plan: "pro" | "elite") {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Checkout failed");
+      window.location.href = payload.url;
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Checkout failed");
+      setLoading(false);
+    }
   }
 
   async function openPortal() {
@@ -45,7 +151,6 @@ export default function DashboardSettingsPage() {
       window.location.href = payload.url;
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not open billing portal");
-    } finally {
       setLoading(false);
     }
   }
@@ -55,49 +160,82 @@ export default function DashboardSettingsPage() {
       <DashboardPageHeader
         eyebrow="Workspace controls"
         title="Settings"
-        description="Manage auth, billing, and Discord alert delivery for the OGFX workspace."
+        description="Manage profile, strategy PDFs, demo account controls, and subscription billing."
       />
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
-          <CardHeader>
-            <CardTitle className="text-white">Account</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="block text-sm text-slate-400">
-              Email
-              <input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white outline-none transition-colors focus:border-cyan-300/40" />
-            </label>
-            <label className="block text-sm text-slate-400">
-              New password
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Leave blank to keep current password" className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-300/40" />
-            </label>
-            <label className="block text-sm text-slate-400">
-              Discord webhook URL
-              <input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://discord.com/api/webhooks/..." className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-300/40" />
-            </label>
-            <Button onClick={saveAccount} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Save settings
-            </Button>
-            {message ? <div className="text-sm text-slate-400">{message}</div> : null}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-3xl border-white/10 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),rgba(255,255,255,0.035))]">
-          <CardHeader>
-            <CardTitle className="text-white">Subscription</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm leading-6 text-slate-400">
-              Stripe Customer Portal handles plan changes, cancellations, invoices, and card updates.
-            </p>
-            <Button onClick={openPortal} disabled={loading} variant="glass" className="mt-5 rounded-xl">
-              Manage subscription
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap gap-2">
+        {(["profile", "strategy", "demo", "subscription"] as Tab[]).map((item) => (
+          <button key={item} onClick={() => setTab(item)} className={`rounded-full border px-4 py-2 text-sm capitalize ${tab === item ? "border-cyan-300/50 bg-cyan-300/10 text-white" : "border-white/10 text-slate-400"}`}>
+            {item}
+          </button>
+        ))}
       </div>
+
+      {message ? <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300">{message}</div> : null}
+
+      {tab === "profile" && (
+        <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
+          <CardHeader><CardTitle className="text-white">Profile</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <label className="block text-sm text-slate-400">Email<input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" /></label>
+            <label className="block text-sm text-slate-400">New password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Leave blank to keep current password" className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" /></label>
+            <label className="block text-sm text-slate-400">Discord webhook URL<input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://discord.com/api/webhooks/..." className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" /></label>
+            <Button onClick={saveAccount} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save profile</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "strategy" && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
+            <CardHeader><CardTitle className="flex items-center gap-2 text-white"><FileText className="h-4 w-4 text-cyan-200" /> Strategy upload</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <input value={strategyName} onChange={(event) => setStrategyName(event.target.value)} className="h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 text-white" />
+              <input type="file" accept="application/pdf" onChange={(event) => setStrategyFile(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-300 file:px-4 file:py-2 file:font-semibold file:text-black" />
+              <Button onClick={uploadStrategy} disabled={loading} variant="glass" className="rounded-xl">Upload PDF</Button>
+            </CardContent>
+          </Card>
+          <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
+            <CardHeader><CardTitle className="text-white">Saved strategies</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {strategies.length ? strategies.map((strategy) => (
+                <div key={strategy.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-3">
+                  <div><div className="font-semibold text-white">{strategy.name}</div><div className="text-xs text-slate-500">{strategy.is_active ? "Active" : new Date(strategy.created_at).toLocaleDateString()}</div></div>
+                  <Button onClick={() => setActiveStrategy(strategy.id)} disabled={loading || strategy.is_active} variant="glass" className="rounded-xl">Set active</Button>
+                </div>
+              )) : <div className="text-sm text-slate-400">No strategy uploaded yet.</div>}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {tab === "demo" && (
+        <Card className="rounded-3xl border-white/10 bg-[#0b1420]/84">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-white"><Shield className="h-4 w-4 text-emerald-200" /> Demo account</CardTitle></CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-3">
+            <label className="text-sm text-slate-400">Balance<input type="number" value={startingBalance} onChange={(event) => setStartingBalance(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
+            <label className="text-sm text-slate-400">Risk %<input type="number" min="0.1" max="5" step="0.1" value={riskPerTrade} onChange={(event) => setRiskPerTrade(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
+            <label className="text-sm text-slate-400">Default lot size<input type="number" min="0.01" step="0.01" value={defaultSize} onChange={(event) => setDefaultSize(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
+            <div className="md:col-span-3"><Button onClick={saveDemo} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">Save demo account</Button></div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "subscription" && (
+        <Card className="rounded-3xl border-white/10 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),rgba(255,255,255,0.035))]">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-white"><CreditCard className="h-4 w-4 text-amber-200" /> Subscription</CardTitle></CardHeader>
+          <CardContent className="space-y-5">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-300">
+              Current plan: <b className="uppercase text-white">{profile?.subscription_tier ?? "free"}</b> / {profile?.subscription_status ?? "inactive"}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => checkout("pro")} disabled={loading} className="rounded-xl bg-cyan-300 text-black hover:bg-cyan-200">Upgrade Pro</Button>
+              <Button onClick={() => checkout("elite")} disabled={loading} className="rounded-xl bg-amber-300 text-black hover:bg-amber-200">Upgrade Elite</Button>
+              <Button onClick={openPortal} disabled={loading} variant="glass" className="rounded-xl">Manage subscription</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

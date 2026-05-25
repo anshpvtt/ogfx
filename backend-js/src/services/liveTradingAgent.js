@@ -79,6 +79,7 @@ export class LiveTradingAgent {
   }
 
   supabase() {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
     return getSupabaseAdmin();
   }
 
@@ -133,15 +134,20 @@ export class LiveTradingAgent {
 
     try {
       const supabase = this.supabase();
-      summary.closedOrders += await this.syncOpenOrders(supabase);
+      summary.persistence = supabase ? "enabled" : "disabled";
 
-      const { data: settings, error: settingsError } = await supabase
-        .from("demo_account_settings")
-        .select("*")
-        .eq("auto_trading_enabled", true);
+      let enabledSettings = [];
+      if (supabase) {
+        summary.closedOrders += await this.syncOpenOrders(supabase);
 
-      if (settingsError && settingsError.code !== "PGRST116") throw new Error(settingsError.message);
-      const enabledSettings = Array.isArray(settings) ? settings : [];
+        const { data: settings, error: settingsError } = await supabase
+          .from("demo_account_settings")
+          .select("*")
+          .eq("auto_trading_enabled", true);
+
+        if (settingsError && settingsError.code !== "PGRST116") throw new Error(settingsError.message);
+        enabledSettings = Array.isArray(settings) ? settings : [];
+      }
 
       for (const assetId of this.assets) {
         for (const timeframe of this.timeframes) {
@@ -150,9 +156,11 @@ export class LiveTradingAgent {
             summary.checked += 1;
 
             if (!result?.decision || this.shouldSkipDuplicate(assetId, timeframe, result.decision)) continue;
-            const affected = await this.persistDecision(supabase, result, enabledSettings);
-            summary.insertedSignals += affected.insertedSignals;
-            summary.openedOrders += affected.openedOrders;
+            if (supabase) {
+              const affected = await this.persistDecision(supabase, result, enabledSettings);
+              summary.insertedSignals += affected.insertedSignals;
+              summary.openedOrders += affected.openedOrders;
+            }
           } catch (error) {
             summary.errors.push(`${assetId}/${timeframe}: ${error?.message || error}`);
           }

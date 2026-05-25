@@ -20,6 +20,18 @@ export async function PATCH(request: NextRequest) {
   const defaultSize = Number(body?.defaultSize ?? 1);
   const watchedAssets = defaultWatchedAssets(body?.watchedAssets);
 
+  if (autoTradingEnabled) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("subscription_tier,subscription_status")
+      .eq("id", user.id)
+      .maybeSingle();
+    const allowed = profile?.subscription_tier === "elite" && ["active", "trialing"].includes(String(profile?.subscription_status));
+    if (!allowed) {
+      return NextResponse.json({ error: "Auto demo agent requires the Elite plan" }, { status: 403 });
+    }
+  }
+
   if (!Number.isFinite(riskPerTrade) || riskPerTrade < 0.001 || riskPerTrade > 0.05) {
     return NextResponse.json({ error: "Risk per trade must be between 0.1% and 5%" }, { status: 400 });
   }

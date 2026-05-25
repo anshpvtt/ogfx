@@ -295,44 +295,6 @@ export class GeminiAnalyzer {
     ].join("\n\n");
 
     const errors = [];
-    if (ollamaKey) {
-      const model = ollamaModel(ollamaImages.length > 0);
-      try {
-        const response = await fetch(OLLAMA_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${ollamaKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{
-              role: "user",
-              content: prompt,
-              ...(ollamaImages.length ? { images: ollamaImages } : {}),
-            }],
-            stream: false,
-            format: "json",
-            options: {
-              temperature: 0.1,
-              num_predict: 800,
-            },
-          }),
-        });
-
-        const raw = await response.text();
-        if (!response.ok) {
-          throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
-        }
-
-        const payload = JSON.parse(raw || "{}");
-        const text = payload?.message?.content ?? payload?.response ?? "{}";
-        return coerceDecision(parseJson(text), model, "ollama");
-      } catch (error) {
-        errors.push(String(error?.message || error));
-      }
-    }
-
     if (openRouterKey) {
       const model = openRouterModel();
       try {
@@ -369,6 +331,44 @@ export class GeminiAnalyzer {
           ? content.map((part) => part?.text || "").join("")
           : String(content || "{}");
         return coerceDecision(parseJson(text), model, "openrouter");
+      } catch (error) {
+        errors.push(String(error?.message || error));
+      }
+    }
+
+    if (ollamaKey) {
+      const model = ollamaModel(ollamaImages.length > 0);
+      try {
+        const response = await fetch(OLLAMA_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${ollamaKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{
+              role: "user",
+              content: prompt,
+              ...(ollamaImages.length ? { images: ollamaImages } : {}),
+            }],
+            stream: false,
+            format: "json",
+            options: {
+              temperature: 0.1,
+              num_predict: 800,
+            },
+          }),
+        });
+
+        const raw = await response.text();
+        if (!response.ok) {
+          throw new Error(`Ollama returned ${response.status}: ${raw.slice(0, 220)}`);
+        }
+
+        const payload = JSON.parse(raw || "{}");
+        const text = payload?.message?.content ?? payload?.response ?? "{}";
+        return coerceDecision(parseJson(text), model, "ollama");
       } catch (error) {
         errors.push(String(error?.message || error));
       }

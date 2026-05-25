@@ -24,6 +24,10 @@ services:
         sync: false
       - key: OLLAMA_API_KEY
         sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemma-4-31b-it:free
       - key: OLLAMA_MODEL
         value: gemma4:31b
       - key: OLLAMA_VISION_MODEL
@@ -47,7 +51,7 @@ services:
       - key: TWELVEDATA_API_KEY
         sync: false
       - key: LIVE_AGENT_ENABLED
-        value: false
+        value: true
       - key: LIVE_AGENT_INTERVAL_SECONDS
         value: 60
       - key: LIVE_AGENT_SIGNAL_GAP_MINUTES

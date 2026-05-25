@@ -93,21 +93,35 @@ export async function POST(request: NextRequest) {
 
   const decision = agentPayload?.decision;
   const signal = decision?.decision === "BUY" || decision?.decision === "SELL" ? decision.decision : "NO_SETUP";
-  const confidenceValue = Number(decision?.confidence ?? 0);
-  const confidence = confidenceValue >= 75 ? "HIGH" : confidenceValue >= 55 ? "MEDIUM" : "LOW";
+  const confidenceValue = Math.max(0, Math.min(100, Math.round(Number(decision?.confidence ?? 0))));
   const { data, error } = await supabase
     .from("signals")
     .insert({
       user_id: user.id,
+      symbol: pair,
       pair,
       timeframe,
+      direction: signal === "NO_SETUP" ? null : signal,
       signal,
-      bias: decision?.bias ?? analysis.signal.bias,
+      bias: signal === "NO_SETUP" ? "WAIT" : signal,
       entry: decision?.entry || null,
+      entry_price: decision?.entry || null,
       stop_loss: decision?.stopLoss || null,
       take_profit: decision?.takeProfit || null,
+      rr_ratio: decision?.riskReward || null,
       risk_reward: decision?.riskReward || null,
-      confidence,
+      confidence: confidenceValue,
+      setup_type: analysis.signal.entryConfirmation || "GEMMA_OGFX_LOGIC",
+      reasoning: decision?.summary || null,
+      reason: decision?.summary || null,
+      checklist: [
+        { label: "AI model response", status: "pass" },
+        { label: "OGFX SMC logic included", status: "pass" },
+        { label: "TP/SL defined", status: decision?.stopLoss && decision?.takeProfit ? "pass" : "pending" },
+        { label: "Trade bias selected", status: signal === "NO_SETUP" ? "pending" : "pass" },
+      ],
+      gemma_analysis: decision?.summary || null,
+      strategy_alignment: "Generated with OGFX strategy datasets and live SMC engine output.",
       confirmation_type: "GEMMA_OGFX_LOGIC",
     })
     .select("*")

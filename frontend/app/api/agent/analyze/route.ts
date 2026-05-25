@@ -430,13 +430,13 @@ export async function POST(request: NextRequest) {
   const imageParts = toImageParts(body);
   const ollamaImages = toOllamaImages(body);
   const openRouterImageParts = toOpenRouterImageParts(body);
-  const model = ollamaApiKey
-    ? getOllamaModel(ollamaImages.length > 0)
-    : openRouterApiKey
+  const model = openRouterApiKey
     ? getOpenRouterModel()
-    : geminiApiKey
-      ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
-      : getOpenRouterModel();
+    : ollamaApiKey
+      ? getOllamaModel(ollamaImages.length > 0)
+      : geminiApiKey
+        ? await resolveGemmaModel(geminiApiKey, imageParts.length > 0)
+        : getOpenRouterModel();
   const requireGemma = Boolean(body.requireGemma);
 
   const prompt = [
@@ -481,15 +481,15 @@ export async function POST(request: NextRequest) {
 
   const errors: string[] = [];
   try {
+    if (openRouterApiKey) {
+      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model, prompt, imageParts: openRouterImageParts });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, model, "openrouter") });
+    }
+
     if (ollamaApiKey) {
       const ollamaModel = getOllamaModel(ollamaImages.length > 0);
       const rawDecision = await callOllama({ apiKey: ollamaApiKey, model: ollamaModel, prompt, images: ollamaImages });
       return NextResponse.json({ decision: coerceDecision(rawDecision, ollamaModel, "ollama") });
-    }
-
-    if (openRouterApiKey) {
-      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model, prompt, imageParts: openRouterImageParts });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, model, "openrouter") });
     }
 
     const rawDecision = await callGemma({ apiKey: geminiApiKey, model, prompt, imageParts });
@@ -499,10 +499,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    if (openRouterApiKey && ollamaApiKey) {
-      const openRouterModel = getOpenRouterModel();
-      const rawDecision = await callOpenRouter({ apiKey: openRouterApiKey, model: openRouterModel, prompt, imageParts: openRouterImageParts });
-      return NextResponse.json({ decision: coerceDecision(rawDecision, openRouterModel, "openrouter") });
+    if (ollamaApiKey && openRouterApiKey) {
+      const ollamaModel = getOllamaModel(ollamaImages.length > 0);
+      const rawDecision = await callOllama({ apiKey: ollamaApiKey, model: ollamaModel, prompt, images: ollamaImages });
+      return NextResponse.json({ decision: coerceDecision(rawDecision, ollamaModel, "ollama") });
     }
 
     if (geminiApiKey && (ollamaApiKey || openRouterApiKey)) {

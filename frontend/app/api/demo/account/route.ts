@@ -28,8 +28,8 @@ export async function GET() {
 
   try {
     await ensureDemoAccount(supabase, user.id);
-    const settings = await ensureDemoSettings(supabase, user.id);
     const synced = await syncUserOpenOrders(supabase, user.id);
+    const settings = await ensureDemoSettings(supabase, user.id);
     const { data: orders, error } = await supabase
       .from("demo_orders")
       .select("*")
@@ -96,6 +96,17 @@ export async function PATCH(request: NextRequest) {
 
     if (error) throw new Error(error.message);
     const account = await recalculateDemoAccount(supabase, user.id);
+    await supabase
+      .from("demo_account_settings")
+      .upsert({
+        user_id: user.id,
+        balance: account?.balance ?? initialBalance,
+        equity: account?.equity ?? initialBalance,
+        margin: account?.margin ?? 0,
+        free_margin: account?.free_margin ?? initialBalance,
+        margin_level: account?.margin_level ?? null,
+        updated_at: now,
+      }, { onConflict: "user_id" });
 
     return NextResponse.json({ account: account ?? data });
   } catch (error: any) {

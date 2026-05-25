@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { LIVE_CHART_TIMEFRAMES, TRADING_ASSETS } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
+import { LiveSmcChart } from "@/components/charts/LiveSmcChart";
 import { backendJson, chartIntervalToApi } from "@/lib/backend-api";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ type MarketSnapshot = {
   dayChangePct: number;
   trend: "BULLISH" | "BEARISH" | "NEUTRAL";
   atr: number;
+  candles?: any[];
 };
 
 type AgentDecision = {
@@ -211,18 +213,19 @@ function decisionFromSignalPayload(payload: any): AgentDecision {
 }
 
 function decisionFromAnalyzePayload(payload: any): AgentDecision | null {
-  const decision = payload?.decision;
+  const decision = payload?.decision ?? payload?.analysis;
   if (!decision) return null;
+  const action = decision.decision ?? decision.bias;
   return {
-    decision: decision.decision === "BUY" || decision.decision === "SELL" ? decision.decision : "WAIT",
+    decision: action === "BUY" || action === "SELL" ? action : "WAIT",
     confidence: Number(decision.confidence ?? 0),
     entry: Number.isFinite(Number(decision.entry)) ? Number(decision.entry) : null,
-    stopLoss: Number.isFinite(Number(decision.stopLoss)) ? Number(decision.stopLoss) : null,
-    takeProfit: Number.isFinite(Number(decision.takeProfit)) ? Number(decision.takeProfit) : null,
-    riskReward: Number.isFinite(Number(decision.riskReward)) ? Number(decision.riskReward) : null,
+    stopLoss: Number.isFinite(Number(decision.stopLoss ?? decision.stop_loss)) ? Number(decision.stopLoss ?? decision.stop_loss) : null,
+    takeProfit: Number.isFinite(Number(decision.takeProfit ?? decision.take_profit)) ? Number(decision.takeProfit ?? decision.take_profit) : null,
+    riskReward: Number.isFinite(Number(decision.riskReward ?? decision.rr_ratio)) ? Number(decision.riskReward ?? decision.rr_ratio) : null,
     bias: String(decision.bias ?? "NEUTRAL"),
-    summary: String(decision.summary ?? "WAIT - Waiting for clean market snapshot."),
-    reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : [],
+    summary: String(decision.summary ?? decision.reasoning ?? decision.gemma_analysis ?? "WAIT - Waiting for clean market snapshot."),
+    reasons: Array.isArray(decision.reasons) ? decision.reasons.map(String) : Array.isArray(decision.checklist) ? decision.checklist.map((item: any) => `${item.label}: ${item.status}`) : [],
     invalidation: String(decision.invalidation ?? "Invalid if price closes beyond the protected structure."),
     model: String(decision.model ?? "google/gemma-4-31b-it:free"),
     mode: decision.mode === "local-demo" ? "local-demo" : decision.mode === "gemma" ? "gemma" : decision.mode === "ollama" ? "ollama" : "openrouter",
@@ -264,6 +267,7 @@ export default function DashboardChartsPage() {
   const [agentWarning, setAgentWarning] = useState("");
   const [agentDecision, setAgentDecision] = useState<AgentDecision | null>(null);
   const [agentImage, setAgentImage] = useState<string>("");
+  const [nativeChartImage, setNativeChartImage] = useState<string>("");
   const [notice, setNotice] = useState("");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
   const [capitalInput, setCapitalInput] = useState("10000");
@@ -409,27 +413,27 @@ export default function DashboardChartsPage() {
       let nextDecision = decisionFromSignalPayload(payload);
       let nextWarning = warningFromGemma(payload.gemma);
 
-      if ((forceAi || agentImage) && activeSnapshot?.latest) {
-        const response = await fetch("/api/agent/analyze", {
+      const chartImage = agentImage || nativeChartImage;
+      if ((forceAi || chartImage) && activeSnapshot?.latest) {
+        const response = await fetch("/api/ai/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            assetId: activeAsset.id,
-            interval: chartIntervalToApi(interval.value),
+            pair: activeAsset.id,
+            timeframe: chartIntervalToApi(interval.value),
             snapshot: activeSnapshot,
-            imageDataUrl: agentImage || undefined,
+            imageDataUrl: chartImage || undefined,
             strategyLogic: {
-              source: agentImage ? "Live Charts attached screenshot" : "Live Charts manual analysis",
+              source: agentImage ? "Live Charts attached screenshot" : "Live Charts native capture",
               rule: "Use OGFX SMC confluence: liquidity sweep, BOS/MSS/CHOCH, order block, FVG, HTF bias, and TP/SL risk preservation.",
             },
-            requireGemma: true,
           }),
         });
         const raw = await response.text();
         const imagePayload = raw ? JSON.parse(raw) : {};
         if (!response.ok) throw new Error(imagePayload.error || "Chart image analysis failed");
         nextDecision = decisionFromAnalyzePayload(imagePayload) ?? nextDecision;
-        nextWarning = imagePayload.warning || "";
+        nextWarning = imagePayload.analysis?.warning || imagePayload.warning || "";
       }
 
       setAgentDecision(nextDecision);
@@ -752,6 +756,17 @@ export default function DashboardChartsPage() {
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="absolute bottom-4 left-4 z-10 w-[min(360px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#05080c]/92 shadow-2xl backdrop-blur">
+              <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                <span>AI capture chart</span>
+                <span className="text-cyan-200">{nativeChartImage ? "ready" : "syncing"}</span>
+              </div>
+              <LiveSmcChart
+                candles={(activeSnapshot as any)?.candles ?? []}
+                height={154}
+                onSnapshot={setNativeChartImage}
+              />
             </div>
           </div>
 

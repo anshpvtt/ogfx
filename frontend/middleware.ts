@@ -36,6 +36,7 @@ export async function middleware(request: NextRequest) {
     Boolean(cronSecret) && request.headers.get("authorization") === `Bearer ${cronSecret}`;
   const isProtected =
     pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/api/ai") ||
     pathname.startsWith("/api/agent") ||
     pathname.startsWith("/api/backtest") ||
     pathname.startsWith("/api/demo") ||
@@ -43,7 +44,13 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/api/stripe/checkout") ||
     pathname.startsWith("/api/stripe/portal");
 
-  if (pathname.startsWith("/api/agent") && isCronAuthorized) {
+  if (
+    isCronAuthorized &&
+    (pathname.startsWith("/api/agent") ||
+      pathname.startsWith("/api/signals/scan") ||
+      pathname.startsWith("/api/demo/pnl") ||
+      pathname.startsWith("/api/cron"))
+  ) {
     return response;
   }
 
@@ -57,11 +64,51 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && (pathname === "/auth" || pathname === "/auth/login" || pathname === "/auth/signup" || pathname === "/signup")) {
+  let profile: any = null;
+  if (user && (pathname.startsWith("/dashboard") || pathname.startsWith("/api/ai") || pathname.startsWith("/api/backtest"))) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("subscription_tier,subscription_status,onboarding_completed")
+      .eq("id", user.id)
+      .maybeSingle();
+    profile = data;
+  }
+
+  if (user && pathname.startsWith("/dashboard") && pathname !== "/auth/onboarding" && !profile?.onboarding_completed) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/dashboard";
+    redirectUrl.pathname = "/auth/onboarding";
     redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
+  }
+
+  if (user && (pathname === "/auth" || pathname === "/auth/login" || pathname === "/auth/signup" || pathname === "/signup")) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = profile?.onboarding_completed === false ? "/auth/onboarding" : "/dashboard";
+    redirectUrl.search = "";
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  const premiumDashboardRoute =
+    pathname.startsWith("/dashboard/ai-coach") ||
+    pathname.startsWith("/dashboard/backtest");
+  const premiumApiRoute =
+    pathname.startsWith("/api/ai/coach") ||
+    pathname.startsWith("/api/ai/parse-strategy") ||
+    pathname.startsWith("/api/backtest");
+
+  if (user && (premiumDashboardRoute || premiumApiRoute)) {
+    const tier = String(profile?.subscription_tier || "free");
+    const status = String(profile?.subscription_status || "inactive");
+    const allowed = tier !== "free" && ["active", "trialing"].includes(status);
+    if (!allowed) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "Upgrade required for this feature" }, { status: 403 });
+      }
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/pricing";
+      redirectUrl.searchParams.set("upgrade", "pro");
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   if (user && pathname.startsWith("/api/signals/generate")) {

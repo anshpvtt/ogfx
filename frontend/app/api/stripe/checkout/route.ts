@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
     mode: "subscription",
     customer_email: user.email,
     client_reference_id: user.id,
+    allow_promotion_codes: true,
     line_items: [{ price: priceId, quantity: 1 }],
     metadata: { user_id: user.id, plan },
     subscription_data: {

@@ -6,12 +6,12 @@
   "framework": "nextjs",
   "crons": [
     {
-      "path": "/api/cron/demo-trading",
+      "path": "/api/signals/scan",
       "schedule": "0 5 * * *"
     },
     {
-      "path": "/api/cron/backtest-strategies",
-      "schedule": "15 0 * * *"
+      "path": "/api/demo/pnl",
+      "schedule": "15 5 * * *"
     }
   ]
 }
