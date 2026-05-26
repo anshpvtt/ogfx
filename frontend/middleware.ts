@@ -68,7 +68,7 @@ export async function middleware(request: NextRequest) {
   if (user && (pathname.startsWith("/dashboard") || pathname.startsWith("/api/ai") || pathname.startsWith("/api/backtest"))) {
     const { data } = await supabase
       .from("profiles")
-      .select("subscription_tier,subscription_status,onboarding_completed")
+      .select("onboarding_completed")
       .eq("id", user.id)
       .maybeSingle();
     profile = data;
@@ -86,55 +86,6 @@ export async function middleware(request: NextRequest) {
     redirectUrl.pathname = profile?.onboarding_completed === false ? "/auth/onboarding" : "/dashboard";
     redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
-  }
-
-  const premiumDashboardRoute =
-    pathname.startsWith("/dashboard/ai-coach") ||
-    pathname.startsWith("/dashboard/backtest");
-  const premiumApiRoute =
-    pathname.startsWith("/api/ai/coach") ||
-    pathname.startsWith("/api/ai/parse-strategy") ||
-    pathname.startsWith("/api/backtest");
-
-  if (user && (premiumDashboardRoute || premiumApiRoute)) {
-    const tier = String(profile?.subscription_tier || "free");
-    const status = String(profile?.subscription_status || "inactive");
-    const allowed = tier !== "free" && ["active", "trialing"].includes(status);
-    if (!allowed) {
-      if (pathname.startsWith("/api/")) {
-        return NextResponse.json({ error: "Upgrade required for this feature" }, { status: 403 });
-      }
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/pricing";
-      redirectUrl.searchParams.set("upgrade", "pro");
-      return NextResponse.redirect(redirectUrl);
-    }
-  }
-
-  if (user && pathname.startsWith("/api/signals/generate")) {
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("plan,status")
-      .eq("user_id", user.id)
-      .in("status", ["active", "trialing"])
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!subscription || subscription.plan === "free") {
-      const monthStart = new Date();
-      monthStart.setUTCDate(1);
-      monthStart.setUTCHours(0, 0, 0, 0);
-      const { count } = await supabase
-        .from("signals")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .gte("created_at", monthStart.toISOString());
-
-      if ((count ?? 0) >= 5) {
-        return NextResponse.json({ error: "Free plan signal limit exceeded" }, { status: 403 });
-      }
-    }
   }
 
   return response;

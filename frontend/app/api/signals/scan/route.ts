@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
   const startedAt = new Date().toISOString();
   const { data: profiles, error: profileError } = await supabase
     .from("profiles")
-    .select("id,subscription_tier,subscription_status,preferred_pairs")
+    .select("id,preferred_pairs")
     .limit(30);
 
   if (profileError) return NextResponse.json({ error: profileError.message }, { status: 500 });
@@ -62,12 +62,9 @@ export async function GET(request: NextRequest) {
   const results: any[] = [];
 
   for (const profile of profiles ?? []) {
-    const tier = String(profile.subscription_tier || "free");
-    const allowedPairs = tier === "free"
-      ? ["XAUUSD"]
-      : Array.isArray(profile.preferred_pairs) && profile.preferred_pairs.length
-        ? profile.preferred_pairs.filter((pair: string) => symbols.includes(pair as any))
-        : symbols.slice(0, tier === "elite" ? symbols.length : 5);
+    const allowedPairs = Array.isArray(profile.preferred_pairs) && profile.preferred_pairs.length
+      ? profile.preferred_pairs.filter((pair: string) => symbols.includes(pair as any))
+      : symbols;
 
     const { data: strategy } = await supabase
       .from("user_strategies")
@@ -155,7 +152,6 @@ export async function GET(request: NextRequest) {
         let autoOrder = null;
         if (
           signal &&
-          tier === "elite" &&
           settings?.auto_trading_enabled &&
           analysis.confidence >= 75 &&
           analysis.entry &&

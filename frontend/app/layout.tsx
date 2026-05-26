@@ -15,8 +15,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "OGFX - Elite SMC Trading Engine",
-  description: "Next.js, Supabase, and Stripe SaaS for deterministic Smart Money Concepts signals and backtesting.",
-  keywords: "SMC trading engine, forex backtesting, Supabase SaaS, Stripe subscriptions, EURUSD, XAUUSD",
+  description: "Next.js and Supabase workspace for deterministic Smart Money Concepts signals and backtesting.",
+  keywords: "SMC trading engine, forex backtesting, Supabase workspace, EURUSD, XAUUSD",
   openGraph: {
     title: "OGFX - Elite SMC Trading Engine",
     description: "Deterministic Smart Money Concepts signals and backtesting",

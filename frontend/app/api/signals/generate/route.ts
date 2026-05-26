@@ -8,19 +8,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 const VALID_PAIRS = new Set<string>(TRADING_ASSET_IDS);
 const VALID_TIMEFRAMES = new Set<string>(BACKTEST_TIMEFRAMES.map((timeframe) => timeframe.value));
 
-async function getPlan(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, userId: string) {
-  const { data } = await supabase
-    .from("subscriptions")
-    .select("plan,status,current_period_end")
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data?.plan ?? "free";
-}
-
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -36,25 +23,9 @@ export async function POST(request: NextRequest) {
   const pair = String(body?.pair ?? "EURUSD").toUpperCase();
   const timeframeInput = String(body?.timeframe ?? "1H").toUpperCase();
   const timeframe = VALID_TIMEFRAMES.has(timeframeInput) ? timeframeInput : "1H";
-  const plan = await getPlan(supabase, user.id);
 
   if (!VALID_PAIRS.has(pair)) {
     return NextResponse.json({ error: "Unknown asset" }, { status: 400 });
-  }
-
-  if (plan === "free") {
-    const monthStart = new Date();
-    monthStart.setUTCDate(1);
-    monthStart.setUTCHours(0, 0, 0, 0);
-    const { count } = await supabase
-      .from("signals")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .gte("created_at", monthStart.toISOString());
-
-    if ((count ?? 0) >= 5) {
-      return NextResponse.json({ error: "Free plan signal limit exceeded" }, { status: 403 });
-    }
   }
 
   const candles = await fetchYahooCandles({ pair, timeframe, range: "6mo" });

@@ -1,7 +1,7 @@
 const sections = [
   {
     title: "Data we collect",
-    body: "Account identifiers, subscription preferences, selected assets, and usage telemetry required to operate charts, signals, backtests, billing, and alerts.",
+    body: "Account identifiers, selected assets, and usage telemetry required to operate charts, signals, backtests, automation, and alerts.",
   },
   {
     title: "How we use data",

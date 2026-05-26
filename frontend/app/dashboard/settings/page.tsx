@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CreditCard, FileText, Link2, Loader2, Save, Shield } from "lucide-react";
+import { CheckCircle2, FileText, Link2, Loader2, Save, Shield } from "lucide-react";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type Tab = "profile" | "strategy" | "demo" | "subscription";
+type Tab = "profile" | "strategy" | "demo" | "access";
 
 export default function DashboardSettingsPage() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -135,48 +135,16 @@ export default function DashboardSettingsPage() {
     setLoading(false);
   }
 
-  async function checkout(plan: "pro" | "elite") {
-    setLoading(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/stripe/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Checkout failed");
-      window.location.href = payload.url;
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Checkout failed");
-      setLoading(false);
-    }
-  }
-
-  async function openPortal() {
-    setLoading(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/stripe/portal", { method: "POST" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Could not open billing portal");
-      window.location.href = payload.url;
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not open billing portal");
-      setLoading(false);
-    }
-  }
-
   return (
     <div className="space-y-7">
       <DashboardPageHeader
         eyebrow="Workspace controls"
         title="Settings"
-        description="Manage profile, strategy PDFs, demo account controls, and subscription billing."
+        description="Manage profile, strategy PDFs, demo account controls, and access status."
       />
 
       <div className="flex flex-wrap gap-2">
-        {(["profile", "strategy", "demo", "subscription"] as Tab[]).map((item) => (
+        {(["profile", "strategy", "demo", "access"] as Tab[]).map((item) => (
           <button key={item} onClick={() => setTab(item)} className={`rounded-full border px-4 py-2 text-sm capitalize ${tab === item ? "border-cyan-300/50 bg-cyan-300/10 text-white" : "border-white/10 text-slate-400"}`}>
             {item}
           </button>
@@ -239,17 +207,15 @@ export default function DashboardSettingsPage() {
         </Card>
       )}
 
-      {tab === "subscription" && (
+      {tab === "access" && (
         <Card className="rounded-3xl border-white/10 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),rgba(255,255,255,0.035))]">
-          <CardHeader><CardTitle className="flex items-center gap-2 text-white"><CreditCard className="h-4 w-4 text-amber-200" /> Subscription</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2 text-white"><CheckCircle2 className="h-4 w-4 text-emerald-200" /> Access</CardTitle></CardHeader>
           <CardContent className="space-y-5">
             <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-300">
-              Current plan: <b className="uppercase text-white">{profile?.subscription_tier ?? "free"}</b> / {profile?.subscription_status ?? "inactive"}
+              All dashboard features, AI tools, generated signals, backtests, and demo automation are unlocked while billing is paused.
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={() => checkout("pro")} disabled={loading} className="rounded-xl bg-cyan-300 text-black hover:bg-cyan-200">Upgrade Pro</Button>
-              <Button onClick={() => checkout("elite")} disabled={loading} className="rounded-xl bg-amber-300 text-black hover:bg-amber-200">Upgrade Elite</Button>
-              <Button onClick={openPortal} disabled={loading} variant="glass" className="rounded-xl">Manage subscription</Button>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-400">
+              Stored plan record: <b className="uppercase text-white">{profile?.subscription_tier ?? "free"}</b> / {profile?.subscription_status ?? "inactive"}
             </div>
           </CardContent>
         </Card>
