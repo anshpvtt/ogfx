@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export function CapitalGrowthChart({
@@ -9,12 +10,14 @@ export function CapitalGrowthChart({
   snapshots: Array<{ time: number; capital: number }>;
   startingCapital: number;
 }) {
-  const data = snapshots.length > 1
-    ? snapshots
-    : Array.from({ length: 24 }, (_, index) => ({
-        time: Date.now() + index * 3600000,
-        capital: startingCapital * Math.pow(1.003, index * 20),
-      }));
+  const data = useMemo(() => {
+    if (snapshots.length > 1) return snapshots.slice(-80);
+    const seedTime = Date.now();
+    return Array.from({ length: 24 }, (_, index) => ({
+      time: seedTime + index * 3600000,
+      capital: startingCapital * Math.pow(1.003, index * 20),
+    }));
+  }, [snapshots, startingCapital]);
 
   const target = 100000;
   const tradesNeeded = Math.log(target / Math.max(1, startingCapital)) / Math.log(1.003);

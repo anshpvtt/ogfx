@@ -1,19 +1,27 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, Cpu, Maximize2, Minimize2, RadioTower, Terminal, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Cpu, Maximize2, Minimize2, RadioTower, Terminal, Wallet, X, Zap } from "lucide-react";
 import { useArbScanner } from "@/hooks/useArbScanner";
 import { usePaperBot } from "@/hooks/usePaperBot";
 import type { PaperTrade } from "@/lib/arbTypes";
 import { ArbitrageScanner } from "./components/ArbitrageScanner";
 import { AssetDeepDive } from "./components/AssetDeepDive";
 import { BotControlPanel } from "./components/BotControlPanel";
-import { CapitalGrowthChart } from "./components/CapitalGrowthChart";
 import { CryptoTickerBar } from "./components/CryptoTickerBar";
 import { ExchangeStatusBar } from "./components/ExchangeStatusBar";
 import { PaperTradeBot } from "./components/PaperTradeBot";
 import { PnLTracker } from "./components/PnLTracker";
 import { TradeLog } from "./components/TradeLog";
+
+const CapitalGrowthChart = dynamic(
+  () => import("./components/CapitalGrowthChart").then((mod) => mod.CapitalGrowthChart),
+  {
+    ssr: false,
+    loading: () => <div className="arb-panel h-[308px] animate-pulse" />,
+  }
+);
 
 function mapDbTrade(row: any): PaperTrade {
   const entryTime = row.entry_time ? new Date(row.entry_time).getTime() : Date.now();
@@ -52,6 +60,8 @@ export default function ArbEnginePage() {
   const [selectedCoin, setSelectedCoin] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("10");
   const arbRootRef = useRef<HTMLDivElement | null>(null);
 
   const assets = scanner.feed?.markets.length || 15;
@@ -96,6 +106,14 @@ export default function ArbEnginePage() {
     }
   }
 
+  function handleDeposit() {
+    const amount = Math.min(1000000, Math.max(0, Number(depositAmount) || 0));
+    if (!amount) return;
+    bot.deposit(amount);
+    setDepositOpen(false);
+    setDepositAmount("10");
+  }
+
   return (
     <div ref={arbRootRef} className={`arb-root -m-4 min-h-screen p-3 sm:-m-6 sm:p-5 lg:-m-8 lg:p-6 ${isFullscreen ? "arb-fullscreen-mode" : ""}`}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -109,16 +127,28 @@ export default function ArbEnginePage() {
           <div className="arb-capital-core">
             <div className="flex items-center justify-between gap-3">
               <div className="arb-label">live capital</div>
-              <button
-                type="button"
-                onClick={toggleFullscreen}
-                className="arb-ecosystem-button"
-                aria-label={isFullscreen ? "Exit fullscreen Arb ecosystem" : "Enter fullscreen Arb ecosystem"}
-                title={isFullscreen ? "Exit fullscreen" : "Fullscreen ecosystem"}
-              >
-                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                <span>{isFullscreen ? "EXIT" : "ECOSYSTEM"}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDepositOpen(true)}
+                  className="arb-ecosystem-button arb-deposit-button"
+                  aria-label="Deposit capital into Arb Engine"
+                  title="Deposit capital"
+                >
+                  <Wallet className="h-4 w-4" />
+                  <span>DEPOSIT</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  className="arb-ecosystem-button"
+                  aria-label={isFullscreen ? "Exit fullscreen Arb ecosystem" : "Enter fullscreen Arb ecosystem"}
+                  title={isFullscreen ? "Exit fullscreen" : "Fullscreen ecosystem"}
+                >
+                  {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  <span>{isFullscreen ? "EXIT" : "ECOSYSTEM"}</span>
+                </button>
+              </div>
             </div>
             <div className={`arb-capital-number ${positive ? "text-[#00ff88]" : "text-[#ff4455]"}`}>
               ${capitalDisplay(bot.state.capital)}
@@ -233,6 +263,64 @@ export default function ArbEnginePage() {
         exchangePrices={scanner.feed?.exchangePrices ?? []}
         onClose={() => setSelectedCoin(null)}
       />
+
+      {depositOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="arb-deposit-modal w-full max-w-md p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="arb-label">crypto capital</div>
+                <h2 className="font-mono text-2xl font-black text-[#eafbff]">DEPOSIT USDT</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDepositOpen(false)}
+                className="grid h-9 w-9 place-items-center rounded border border-[#164e63] text-[#83afc2] transition hover:border-[#22d3ee]/60 hover:text-[#22d3ee]"
+                aria-label="Close deposit"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label className="arb-field mt-5">
+              Amount
+              <input
+                autoFocus
+                type="number"
+                min={1}
+                max={1000000}
+                step={1}
+                value={depositAmount}
+                onChange={(event) => setDepositAmount(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleDeposit();
+                }}
+              />
+            </label>
+
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {[1, 10, 100, 1000].map((amount) => (
+                <button
+                  key={amount}
+                  type="button"
+                  onClick={() => setDepositAmount(String(amount))}
+                  className="arb-deposit-chip"
+                >
+                  ${amount}
+                </button>
+              ))}
+            </div>
+
+            <button type="button" onClick={handleDeposit} className="arb-deposit-confirm mt-5">
+              <Wallet className="h-4 w-4" />
+              Deposit to Arb Engine
+            </button>
+            <p className="mt-3 font-mono text-[11px] leading-relaxed text-[#83afc2]">
+              Adds capital to the Arb Engine balance and updates the live growth curve instantly.
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

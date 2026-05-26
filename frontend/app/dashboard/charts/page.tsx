@@ -29,7 +29,6 @@ import {
 } from "lucide-react";
 import { LIVE_CHART_TIMEFRAMES, TRADING_ASSETS } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
-import { LiveSmcChart } from "@/components/charts/LiveSmcChart";
 import { chartIntervalToApi } from "@/lib/backend-api";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -46,6 +45,11 @@ import { cn } from "@/lib/utils";
 const TradingViewAdvancedChart = dynamic(
   () => import("@/components/charts/TradingViewWidgets").then((mod) => mod.TradingViewAdvancedChart),
   { ssr: false }
+);
+
+const LiveSmcChart = dynamic(
+  () => import("@/components/charts/LiveSmcChart").then((mod) => mod.LiveSmcChart),
+  { ssr: false, loading: () => <div className="h-full min-h-[140px] animate-pulse rounded-xl bg-white/[0.03]" /> }
 );
 
 type MarketSnapshot = {
@@ -292,6 +296,7 @@ export default function DashboardChartsPage() {
   const [agentDecision, setAgentDecision] = useState<AgentDecision | null>(null);
   const [agentImage, setAgentImage] = useState<string>("");
   const [nativeChartImage, setNativeChartImage] = useState<string>("");
+  const [nativeCaptureEnabled, setNativeCaptureEnabled] = useState(false);
   const [notice, setNotice] = useState("");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
   const [capitalInput, setCapitalInput] = useState("10000");
@@ -462,6 +467,19 @@ export default function DashboardChartsPage() {
     scaleRef.current = { min: chartLevelMin, max: chartLevelMax };
   }, [chartLevelMin, chartLevelMax]);
 
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 900px)").matches) return;
+    const enable = () => setNativeCaptureEnabled(true);
+    const requestIdle = window.requestIdleCallback;
+    const cancelIdle = window.cancelIdleCallback;
+    if (typeof requestIdle === "function" && typeof cancelIdle === "function") {
+      const id = requestIdle(enable, { timeout: 4000 });
+      return () => cancelIdle(id);
+    }
+    const id = globalThis.setTimeout(enable, 1800);
+    return () => globalThis.clearTimeout(id);
+  }, []);
+
   const priceFromPointer = useCallback((clientY: number) => {
     const node = levelOverlayRef.current;
     const { min, max } = scaleRef.current;
@@ -606,15 +624,19 @@ export default function DashboardChartsPage() {
     if (!userId) return;
     setSyncingAccount(true);
     try {
-      const accountResponse = await fetch("/api/demo/account", { cache: "no-store" });
-      const accountPayload = await accountResponse.json().catch(() => ({}));
+      const [accountResponse, settingsResponse] = await Promise.all([
+        fetch("/api/demo/account", { cache: "no-store" }),
+        fetch("/api/demo/settings", { cache: "no-store" }),
+      ]);
+      const [accountPayload, settingsPayload] = await Promise.all([
+        accountResponse.json().catch(() => ({})),
+        settingsResponse.json().catch(() => ({})),
+      ]);
       if (!accountResponse.ok) throw new Error(accountPayload.error || "Failed to load demo account");
 
       setAccount(accountPayload.account);
       setOrders((accountPayload.orders ?? []).map(toDemoOrder));
       setCapitalInput(String(Number(accountPayload.account?.initial_balance ?? accountPayload.account?.balance ?? 10000)));
-      const settingsResponse = await fetch("/api/demo/settings", { cache: "no-store" });
-      const settingsPayload = await settingsResponse.json().catch(() => ({}));
       if (settingsResponse.ok) setSettings(settingsPayload.settings);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to sync demo account");
@@ -625,7 +647,9 @@ export default function DashboardChartsPage() {
 
   useEffect(() => {
     loadSnapshots();
-    const handle = window.setInterval(loadSnapshots, 10000);
+    const handle = window.setInterval(() => {
+      if (!document.hidden) loadSnapshots();
+    }, 10000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interval.value, refreshKey]);
@@ -633,7 +657,9 @@ export default function DashboardChartsPage() {
   useEffect(() => {
     if (!userId) return;
     loadDemoAccount();
-    const handle = window.setInterval(loadDemoAccount, 15000);
+    const handle = window.setInterval(() => {
+      if (!document.hidden) loadDemoAccount();
+    }, 15000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -701,7 +727,7 @@ export default function DashboardChartsPage() {
     setAgentWarning("");
 
     try {
-      const chartImage = agentImage || nativeChartImage;
+      const chartImage = agentImage || (nativeCaptureEnabled ? nativeChartImage : "");
       const response = await fetch("/api/ai/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -741,7 +767,9 @@ export default function DashboardChartsPage() {
   useEffect(() => {
     if (!userId) return;
     runAgent(false);
-    const handle = window.setInterval(runAgent, 60000);
+    const handle = window.setInterval(() => {
+      if (!document.hidden) runAgent(false);
+    }, 60000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAsset.id, interval.value, userId]);
@@ -1378,13 +1406,19 @@ export default function DashboardChartsPage() {
             <div className="absolute bottom-4 left-4 z-10 w-[min(360px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#05080c]/92 shadow-2xl backdrop-blur">
               <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-slate-400">
                 <span>AI capture chart</span>
-                <span className="text-cyan-200">{nativeChartImage ? "ready" : "syncing"}</span>
+                <span className="text-cyan-200">{nativeCaptureEnabled ? (nativeChartImage ? "ready" : "syncing") : "standby"}</span>
               </div>
-              <LiveSmcChart
-                candles={(activeSnapshot as any)?.candles ?? []}
-                height={154}
-                onSnapshot={setNativeChartImage}
-              />
+              {nativeCaptureEnabled ? (
+                <LiveSmcChart
+                  candles={(activeSnapshot as any)?.candles ?? []}
+                  height={154}
+                  onSnapshot={setNativeChartImage}
+                />
+              ) : (
+                <div className="grid min-h-[140px] place-items-center px-4 text-center text-xs text-slate-500">
+                  Capture loads during idle on desktop. Mobile uses structured live data for speed.
+                </div>
+              )}
             </div>
           </div>
 

@@ -39,6 +39,8 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
   const [state, setState] = useState<PaperBotState>(() => createInitialBotState(DEFAULT_BOT_CONFIG));
   const [recentEvents, setRecentEvents] = useState<ExecutionTapeEvent[]>([]);
   const clickAudioRef = useRef<HTMLAudioElement | null>(null);
+  const syncQueueRef = useRef<PaperBotEvent[]>([]);
+  const syncTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     clickAudioRef.current = new Audio("/sounds/arb-click.mp3");
@@ -56,18 +58,35 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
     void clip.play().catch(() => undefined);
   }, []);
 
+  const scheduleSync = useCallback((events: PaperBotEvent[]) => {
+    const syncable = events.filter((event) => event.type === "closed" || event.type === "snapshot");
+    if (!syncable.length) return;
+    syncQueueRef.current.push(...syncable);
+    if (syncTimerRef.current != null) return;
+    syncTimerRef.current = window.setTimeout(() => {
+      const batch = syncQueueRef.current.splice(0, 500);
+      syncTimerRef.current = null;
+      for (const event of batch) {
+        if (event.type === "closed") postJson("/api/arb/trade/close", { trade: event.trade });
+        if (event.type === "snapshot") postJson("/api/arb/capital", { capital: event.capital, snapshotAt: event.time });
+      }
+    }, 1200);
+  }, []);
+
   const publishEvents = useCallback((events: PaperBotEvent[]) => {
     const tape = events.map(tapeFromEvent).filter(Boolean) as ExecutionTapeEvent[];
     if (tape.length) {
       tape.forEach((event, index) => window.setTimeout(() => playTradeClick(event.tone), index * 120));
       setRecentEvents((current) => [...tape, ...current].slice(0, 8));
     }
-    for (const event of events) {
-      if (event.type === "opened") postJson("/api/arb/trade/open", { trade: event.trade });
-      if (event.type === "closed") postJson("/api/arb/trade/close", { trade: event.trade });
-      if (event.type === "snapshot") postJson("/api/arb/capital", { capital: event.capital, snapshotAt: event.time });
-    }
-  }, [playTradeClick]);
+    scheduleSync(events);
+  }, [playTradeClick, scheduleSync]);
+
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current != null) window.clearTimeout(syncTimerRef.current);
+    };
+  }, []);
 
   const start = useCallback((nextConfig: BotConfig = config) => {
     const sanitized = {
@@ -101,6 +120,28 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
     setState((current) => ({ ...current, isRunning: false }));
     postJson("/api/arb/bot/stop", {});
   }, []);
+
+  const deposit = useCallback((amount: number) => {
+    const cleanAmount = Math.min(1000000, Math.max(0, Number(amount) || 0));
+    if (!cleanAmount) return;
+
+    const now = Date.now();
+    const nextCapital = Number((state.capital + cleanAmount).toFixed(6));
+    setConfig((current) => ({
+      ...current,
+      startingCapital: Number((current.startingCapital + cleanAmount).toFixed(6)),
+    }));
+    setState((current) => {
+      const capital = Number((current.capital + cleanAmount).toFixed(6));
+      return {
+        ...current,
+        capital,
+        startingCapital: Number((current.startingCapital + cleanAmount).toFixed(6)),
+        snapshots: [...current.snapshots, { time: now, capital }].slice(-180),
+      };
+    });
+    postJson("/api/arb/capital", { capital: nextCapital, snapshotAt: now });
+  }, [state.capital]);
 
   const paperTrade = useCallback((opportunity: ArbOpportunity) => {
     const singleConfig = { ...config, minSpreadPct: Math.max(0.15, opportunity.spreadPercent - 0.001), maxOpenTrades: config.maxOpenTrades + 1 };
@@ -147,6 +188,7 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
     recentEvents,
     start,
     stop,
+    deposit,
     paperTrade,
     hydrateHistory,
   };

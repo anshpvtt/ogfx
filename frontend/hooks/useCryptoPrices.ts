@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CryptoPriceFeed } from "@/lib/arbTypes";
 
 export function useCryptoPrices() {
   const [feed, setFeed] = useState<CryptoPriceFeed | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const feedRef = useRef<CryptoPriceFeed | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const response = await fetch("/api/arb/prices", { cache: "no-store" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || "Price feed failed");
+      feedRef.current = payload;
       setFeed(payload);
       setError(payload.warning || null);
     } catch (err) {
@@ -24,7 +26,10 @@ export function useCryptoPrices() {
 
   useEffect(() => {
     refresh();
-    const interval = window.setInterval(refresh, 10000);
+    const interval = window.setInterval(() => {
+      if (document.hidden && feedRef.current) return;
+      refresh();
+    }, 10000);
     return () => window.clearInterval(interval);
   }, [refresh]);
 

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import TransitionProvider from "./TransitionProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -34,7 +33,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased bg-[#0B0F19] text-white min-h-screen`}
       >
-        <TransitionProvider>{children}</TransitionProvider>
+        {children}
       </body>
     </html>
   );

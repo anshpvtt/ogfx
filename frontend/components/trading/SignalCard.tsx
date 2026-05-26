@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { ArrowUp, ArrowDown, Target, Shield, Clock, TrendingUp, Zap, Diamond, BarChart3, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +11,7 @@ interface SignalCardProps {
   index?: number;
 }
 
-export function SignalCard({ signal, index = 0 }: SignalCardProps) {
+export function SignalCard({ signal }: SignalCardProps) {
   const isBuy = signal.type === "BUY";
   const isActive = signal.status === "ACTIVE";
   const isSMC = signal.smcData !== undefined;
@@ -22,11 +21,7 @@ export function SignalCard({ signal, index = 0 }: SignalCardProps) {
   const isMediumQuality = signal.confidence >= 70 && signal.confidence < 85;
   
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.1 }}
-    >
+    <div>
       <Card
         className={cn(
           "relative overflow-hidden transition-all duration-300",
@@ -113,10 +108,8 @@ export function SignalCard({ signal, index = 0 }: SignalCardProps) {
               <TrendingUp className="w-4 h-4 text-ogfx-accent" />
               <span className="text-sm text-gray-300">Confidence:</span>
               <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${signal.confidence}%` }}
-                  transition={{ duration: 0.5, delay: 0.2 }}
+                <div
+                  style={{ width: `${signal.confidence}%` }}
                   className={cn(
                     "h-full rounded-full",
                     signal.confidence >= 85
@@ -215,6 +208,6 @@ export function SignalCard({ signal, index = 0 }: SignalCardProps) {
           )}
         </CardContent>
       </Card>
-    </motion.div>
+    </div>
   );
 }

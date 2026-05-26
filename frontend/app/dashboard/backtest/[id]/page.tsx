@@ -1,14 +1,19 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import EquityChart from "@/components/EquityChart";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
+
+const EquityChart = dynamic(() => import("@/components/EquityChart"), {
+  ssr: false,
+  loading: () => <div className="h-60 rounded-2xl bg-white/[0.035]" />,
+});
 
 function fmt(value: unknown) {
   const number = Number(value);

@@ -1,9 +1,9 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, BarChart3, CalendarDays, Loader2, Play, SlidersHorizontal } from "lucide-react";
-import EquityChart from "@/components/EquityChart";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { BACKTEST_TIMEFRAMES, TRADING_ASSETS, groupTradingAssets } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { backendJson } from "@/lib/backend-api";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+
+const EquityChart = dynamic(() => import("@/components/EquityChart"), {
+  ssr: false,
+  loading: () => <div className="h-60 rounded-2xl bg-white/[0.035]" />,
+});
 
 type BacktestPayload = {
   backtestId: string;

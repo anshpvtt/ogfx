@@ -7,18 +7,20 @@ import { useCryptoPrices } from "@/hooks/useCryptoPrices";
 
 export function useArbScanner() {
   const prices = useCryptoPrices();
-  const [opportunities, setOpportunities] = useState<ArbOpportunity[]>([]);
   const [tick, setTick] = useState(Date.now());
 
   useEffect(() => {
-    const interval = window.setInterval(() => setTick(Date.now()), 1000);
+    const intervalMs = window.matchMedia("(max-width: 768px)").matches ? 1500 : 1000;
+    const interval = window.setInterval(() => {
+      if (!document.hidden) setTick(Date.now());
+    }, intervalMs);
     return () => window.clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (!prices.feed?.exchangePrices?.length) return;
-    setOpportunities(scanForArbitrage(prices.feed.exchangePrices, tick));
-  }, [prices.feed, tick]);
+  const opportunities = useMemo<ArbOpportunity[]>(() => {
+    if (!prices.feed?.exchangePrices?.length) return [];
+    return scanForArbitrage(prices.feed.exchangePrices, tick);
+  }, [prices.feed?.exchangePrices, tick]);
 
   const pricePointCount = useMemo(() => prices.feed?.exchangePrices?.length ?? 0, [prices.feed]);
 

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { motion } from "framer-motion";
 import { ArrowRight, Lock, Mail, Shield } from "lucide-react";
 import { OgfxLogo } from "@/components/brand/OgfxLogo";
 import { Button } from "@/components/ui/button";
@@ -61,17 +60,13 @@ export default function AuthClient({ initialMode = "login" }: { initialMode?: "l
     <div className="flex min-h-screen items-center justify-center bg-[#060b12] p-4">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.08),transparent_38%)]" />
       <div className="relative w-full max-w-md">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8 text-center"
-        >
+        <div className="mb-8 text-center">
           <OgfxLogo className="mb-4 h-16 w-16 rounded-2xl" priority />
           <h1 className="text-2xl font-black text-white">Welcome to OGFX</h1>
           <p className="mt-2 text-slate-400">Premium trading signals platform</p>
-        </motion.div>
+        </div>
 
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }}>
+        <div>
           <Card className="rounded-3xl border-white/10 bg-[#0b1420]/92 shadow-[0_30px_110px_rgba(0,0,0,0.35)]">
             <CardHeader className="text-center">
               <CardTitle className="text-xl text-white">{mode === "login" ? "Sign in" : "Create account"}</CardTitle>
@@ -144,23 +139,18 @@ export default function AuthClient({ initialMode = "login" }: { initialMode?: "l
               )}
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="mt-6 flex items-center justify-center gap-2 text-sm text-slate-500"
-        >
+        <div className="mt-6 flex items-center justify-center gap-2 text-sm text-slate-500">
           <Shield className="h-4 w-4" />
           <span>Email verification via Supabase</span>
-        </motion.div>
+        </div>
 
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mt-4 text-center">
+        <div className="mt-4 text-center">
           <Link href="/" className="text-sm text-slate-500 transition-colors hover:text-slate-300">
             Back to home
           </Link>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

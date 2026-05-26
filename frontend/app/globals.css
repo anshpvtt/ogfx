@@ -1830,6 +1830,8 @@ td.neg { color: var(--sell); }
     radial-gradient(circle at top left, rgba(34, 211, 238, 0.1), transparent 34%),
     radial-gradient(circle at bottom right, rgba(167, 139, 250, 0.08), transparent 38%);
   box-shadow: 0 0 18px rgba(34, 211, 238, 0.1), inset 0 1px 0 rgba(234, 251, 255, 0.05);
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
 }
 
 .arb-console-head {
@@ -1902,6 +1904,67 @@ td.neg { color: var(--sell); }
 .arb-ecosystem-button:hover {
   border-color: rgba(34, 211, 238, 0.68);
   background: rgba(34, 211, 238, 0.15);
+  transform: translateY(-1px);
+}
+
+.arb-deposit-button {
+  border-color: rgba(0, 255, 136, 0.34);
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.1);
+}
+
+.arb-deposit-button:hover {
+  border-color: rgba(0, 255, 136, 0.68);
+  background: rgba(0, 255, 136, 0.2);
+}
+
+.arb-deposit-modal {
+  border: 1px solid rgba(0, 255, 136, 0.2);
+  background:
+    linear-gradient(180deg, rgba(7, 17, 30, 0.98), rgba(2, 6, 23, 0.97)),
+    radial-gradient(circle at top left, rgba(0, 255, 136, 0.12), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(34, 211, 238, 0.12), transparent 36%);
+  box-shadow: 0 0 36px rgba(0, 255, 136, 0.18), inset 0 1px 0 rgba(234, 251, 255, 0.06);
+}
+
+.arb-deposit-chip {
+  min-height: 38px;
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: #8aebff;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 900;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.arb-deposit-chip:hover {
+  border-color: rgba(0, 255, 136, 0.55);
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+}
+
+.arb-deposit-confirm {
+  display: inline-flex;
+  min-height: 46px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgba(0, 255, 136, 0.45);
+  background: linear-gradient(180deg, rgba(0, 255, 136, 0.22), rgba(0, 255, 136, 0.12));
+  color: #e0ffe8;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.arb-deposit-confirm:hover {
+  border-color: rgba(0, 255, 136, 0.78);
+  box-shadow: 0 0 18px rgba(0, 255, 136, 0.18);
   transform: translateY(-1px);
 }
 
@@ -2257,6 +2320,57 @@ td.neg { color: var(--sell); }
   .arb-footer-line {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 768px) {
+  .grid-bg,
+  .animated-grid,
+  .orbital-grid,
+  .scene-shell,
+  .workflow-card,
+  .liquid-layer,
+  .liquid-orb,
+  .principles-track,
+  .arb-live,
+  .arb-capital-number,
+  .arb-sparkline i,
+  .arb-event-hero,
+  .arb-event-hero::after,
+  .arb-event-row,
+  .arb-row-profit,
+  .arb-row-loss {
+    animation: none !important;
+  }
+
+  .arb-root::before,
+  .arb-scanlines {
+    opacity: 0.18;
+  }
+
+  .arb-panel,
+  .arb-capital-core,
+  .arb-system-card,
+  .arb-mini-stat,
+  .arb-stat-card,
+  .arb-op-row,
+  .arb-event-hero,
+  .arb-event-row {
+    box-shadow: inset 0 1px 0 rgba(234, 251, 255, 0.04) !important;
+  }
+
+  .backdrop-blur,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl,
+  .backdrop-blur-2xl {
+    backdrop-filter: none !important;
+  }
+
+  .blur-3xl {
+    filter: blur(28px) !important;
+    opacity: 0.55;
   }
 }
 
