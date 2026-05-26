@@ -1,0 +1,154 @@
+import type { ArbOpportunity, BotConfig, PaperBotEvent, PaperBotState, PaperTrade } from "@/lib/arbTypes";
+
+export const DEFAULT_BOT_CONFIG: BotConfig = {
+  startingCapital: 100,
+  maxPositionSizePct: 80,
+  minSpreadPct: 0.2,
+  maxOpenTrades: 3,
+  targetCoins: ["ALL"],
+  riskMode: "moderate",
+  stopLossEnabled: true,
+  stopLossPct: 1,
+};
+
+export function createInitialBotState(config: BotConfig = DEFAULT_BOT_CONFIG): PaperBotState {
+  return {
+    isRunning: false,
+    capital: config.startingCapital,
+    startingCapital: config.startingCapital,
+    trades: [],
+    snapshots: [{ time: Date.now(), capital: config.startingCapital }],
+    lastTickAt: 0,
+  };
+}
+
+function riskMultiplier(mode: BotConfig["riskMode"]) {
+  if (mode === "conservative") return 0.55;
+  if (mode === "aggressive") return 1;
+  return 0.8;
+}
+
+function targetAllowed(config: BotConfig, opportunity: ArbOpportunity) {
+  return config.targetCoins.includes("ALL") || config.targetCoins.includes(opportunity.coinId);
+}
+
+function availableCapital(state: PaperBotState) {
+  const locked = state.trades
+    .filter((trade) => trade.status === "open")
+    .reduce((sum, trade) => sum + trade.capitalUsed, 0);
+  return Math.max(0, state.capital - locked);
+}
+
+function openTrade(config: BotConfig, state: PaperBotState, opportunity: ArbOpportunity, now: number): PaperTrade {
+  const capitalToUse = Math.max(
+    1,
+    Math.min(
+      availableCapital(state),
+      state.capital * (config.maxPositionSizePct / 100) * riskMultiplier(config.riskMode)
+    )
+  );
+  const size = capitalToUse / opportunity.buyPrice;
+  return {
+    id: `arb-${opportunity.coinId}-${now}-${Math.round(Math.random() * 10000)}`,
+    coin: opportunity.coin,
+    coinId: opportunity.coinId,
+    buyExchange: opportunity.buyExchange,
+    sellExchange: opportunity.sellExchange,
+    entryTime: now,
+    buyPrice: opportunity.buyPrice,
+    sellPrice: opportunity.sellPrice,
+    size,
+    capitalUsed: capitalToUse,
+    grossSpreadPct: opportunity.spreadPercent,
+    fees: capitalToUse * 0.002,
+    status: "open",
+    reason: `${opportunity.spreadPercent.toFixed(3)}% simulated spread detected between ${opportunity.buyExchange} and ${opportunity.sellExchange}.`,
+  };
+}
+
+function closeTrade(trade: PaperTrade, now: number, reason: string): PaperTrade {
+  const elapsedPenalty = Math.min(0.18, ((now - trade.entryTime) / 30000) * 0.08);
+  const executionDrift = 0.93 + ((trade.id.charCodeAt(4) || 0) % 14) / 100;
+  const netPct = Math.max(-0.02, trade.grossSpreadPct / 100 - 0.002 - elapsedPenalty / 100) * executionDrift;
+  const pnl = trade.capitalUsed * netPct;
+  return {
+    ...trade,
+    exitTime: now,
+    pnl,
+    pnlPct: (pnl / trade.capitalUsed) * 100,
+    status: "closed",
+    reason,
+  };
+}
+
+export function botTick(config: BotConfig, state: PaperBotState, opportunities: ArbOpportunity[], now = Date.now()) {
+  if (!state.isRunning) return { state, events: [] as PaperBotEvent[] };
+
+  const events: PaperBotEvent[] = [];
+  let nextCapital = state.capital;
+  const nextTrades = state.trades.map((trade) => {
+    if (trade.status !== "open") return trade;
+    const current = opportunities.find((opportunity) => opportunity.coinId === trade.coinId);
+    const timedOut = now - trade.entryTime >= 30000;
+    const collapsed = !current || current.spreadPercent < config.minSpreadPct * 0.72;
+    const stopLoss = config.stopLossEnabled && now - trade.entryTime > 6000 && trade.grossSpreadPct < config.stopLossPct * 0.15;
+    if (!timedOut && !collapsed && !stopLoss) return trade;
+
+    const closed = closeTrade(
+      trade,
+      now,
+      timedOut ? "30s paper window expired." : collapsed ? "Spread collapsed below execution threshold." : "Paper stop-loss guard triggered."
+    );
+    nextCapital += closed.pnl || 0;
+    events.push({ type: "closed", trade: closed });
+    return closed;
+  });
+
+  const openCount = nextTrades.filter((trade) => trade.status === "open").length;
+  const best = opportunities.find((opportunity) =>
+    opportunity.spreadPercent >= config.minSpreadPct &&
+    targetAllowed(config, opportunity) &&
+    !nextTrades.some((trade) => trade.status === "open" && trade.coinId === opportunity.coinId)
+  );
+
+  if (best && openCount < config.maxOpenTrades && availableCapital({ ...state, capital: nextCapital, trades: nextTrades }) >= 1) {
+    const trade = openTrade(config, { ...state, capital: nextCapital, trades: nextTrades }, best, now);
+    nextTrades.unshift(trade);
+    events.push({ type: "opened", trade });
+  }
+
+  const shouldSnapshot = !state.snapshots.length || now - state.snapshots[state.snapshots.length - 1].time >= 60000;
+  const snapshots = shouldSnapshot
+    ? [...state.snapshots, { time: now, capital: nextCapital }].slice(-180)
+    : state.snapshots;
+  if (shouldSnapshot) events.push({ type: "snapshot", capital: nextCapital, time: now });
+
+  return {
+    state: {
+      ...state,
+      capital: nextCapital,
+      trades: nextTrades.slice(0, 250),
+      snapshots,
+      lastTickAt: now,
+    },
+    events,
+  };
+}
+
+export function paperStats(trades: PaperTrade[], capital: number, startingCapital: number) {
+  const closed = trades.filter((trade) => trade.status === "closed");
+  const won = closed.filter((trade) => Number(trade.pnl || 0) > 0);
+  const lost = closed.filter((trade) => Number(trade.pnl || 0) <= 0);
+  const best = closed.reduce<PaperTrade | null>((current, trade) => !current || Number(trade.pnl || 0) > Number(current.pnl || 0) ? trade : current, null);
+  const worst = closed.reduce<PaperTrade | null>((current, trade) => !current || Number(trade.pnl || 0) < Number(current.pnl || 0) ? trade : current, null);
+  return {
+    closed: closed.length,
+    won: won.length,
+    lost: lost.length,
+    winRate: closed.length ? (won.length / closed.length) * 100 : 0,
+    bestTrade: best?.pnl || 0,
+    worstTrade: worst?.pnl || 0,
+    totalReturn: capital - startingCapital,
+    totalReturnPct: startingCapital > 0 ? ((capital - startingCapital) / startingCapital) * 100 : 0,
+  };
+}

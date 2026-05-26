@@ -22,6 +22,15 @@ export type StructuredSmcAnalysis = {
   warning?: string;
 };
 
+export type GeminiImageInput =
+  | string
+  | {
+      data?: string;
+      dataUrl?: string;
+      mimeType?: string;
+      mime_type?: string;
+    };
+
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const TEXT_MODEL_FALLBACK = "gemma-4-26b-a4b-it";
 const VISION_MODEL_FALLBACK = "gemini-2.5-flash";
@@ -219,15 +228,32 @@ export function normalizeSmcAnalysis(value: any, provider: StructuredSmcAnalysis
   };
 }
 
-function geminiImageParts(imageDataUrl?: string) {
-  if (!imageDataUrl) return [];
-  const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  return [{
-    inline_data: {
-      mime_type: match?.[1] || "image/png",
-      data: match?.[2] || imageDataUrl,
-    },
-  }];
+function geminiImageParts(images?: GeminiImageInput | GeminiImageInput[]) {
+  const sources = Array.isArray(images) ? images : images ? [images] : [];
+  return sources.flatMap((source) => {
+    if (!source) return [];
+
+    if (typeof source === "object") {
+      const value = String(source.dataUrl || source.data || "");
+      if (!value) return [];
+      const match = value.match(/^data:([^;]+);base64,(.+)$/);
+      return [{
+        inline_data: {
+          mime_type: String(source.mimeType || source.mime_type || match?.[1] || "image/png"),
+          data: match?.[2] || value,
+        },
+      }];
+    }
+
+    const value = String(source);
+    const match = value.match(/^data:([^;]+);base64,(.+)$/);
+    return [{
+      inline_data: {
+        mime_type: match?.[1] || "image/png",
+        data: match?.[2] || value,
+      },
+    }];
+  });
 }
 
 async function callGemini(systemPrompt: string, userMessage: string, imageDataUrl?: string, temperature = 0.15) {
@@ -274,6 +300,38 @@ export async function callGemmaText(systemPrompt: string, userMessage: string) {
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
       generationConfig: { temperature: 0.35 },
+    }),
+  });
+
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Google AI returned ${response.status}: ${raw.slice(0, 500)}`);
+  const payload = JSON.parse(raw || "{}");
+  const content = payload?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("") ?? "";
+  return { content, provider: "gemini" as const, model };
+}
+
+export async function callGemmaCoach(params: {
+  systemPrompt: string;
+  userMessage: string;
+  images?: GeminiImageInput[];
+  temperature?: number;
+}) {
+  const imageParts = geminiImageParts(params.images);
+  const model = await resolveGoogleModel(imageParts.length > 0);
+  const key = geminiKey();
+  if (!key) throw new Error("GEMINI_API_KEY is not configured");
+
+  const response = await fetch(`${GEMINI_ENDPOINT}/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [{ text: `${params.systemPrompt}\n\n${params.userMessage}` }, ...imageParts],
+      }],
+      generationConfig: {
+        temperature: params.temperature ?? 0.25,
+      },
     }),
   });
 

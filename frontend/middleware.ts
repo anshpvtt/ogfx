@@ -36,6 +36,7 @@ export async function middleware(request: NextRequest) {
     Boolean(cronSecret) && request.headers.get("authorization") === `Bearer ${cronSecret}`;
   const isProtected =
     pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/api/arb") ||
     pathname.startsWith("/api/ai") ||
     pathname.startsWith("/api/agent") ||
     pathname.startsWith("/api/backtest") ||

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  ArrowLeftRight,
   BarChart3,
   Bot,
   CandlestickChart,
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/analyze", label: "Analyze", icon: CandlestickChart },
   { href: "/dashboard/charts", label: "Live Charts", icon: LineChart },
   { href: "/dashboard/signals", label: "Signals", icon: Signal },
+  { href: "/dashboard/arb-engine", label: "Arb Engine", icon: ArrowLeftRight, badge: "NEW" },
   { href: "/dashboard/backtest", label: "Backtest", icon: BarChart3 },
   { href: "/dashboard/ai-coach", label: "AI Coach", icon: Bot },
   { href: "/dashboard/history", label: "History", icon: History },
@@ -80,6 +82,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 >
                   <Icon className={cn("h-4 w-4", active ? "text-cyan-200" : "text-slate-500 group-hover:text-cyan-200")} />
                   {item.label}
+                  {"badge" in item ? (
+                    <span className="ml-auto rounded border border-emerald-300/30 bg-emerald-300/10 px-1.5 py-0.5 text-[10px] font-black text-emerald-200">
+                      {item.badge}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}

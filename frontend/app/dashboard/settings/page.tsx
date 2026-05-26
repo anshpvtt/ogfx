@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileText, Link2, Loader2, Save, Shield } from "lucide-react";
+import { CheckCircle2, FileText, KeyRound, Link2, Loader2, PlugZap, Save, Shield } from "lucide-react";
 import { DashboardPageHeader } from "@/components/layout/DashboardPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type Tab = "profile" | "strategy" | "demo" | "access";
+type Tab = "profile" | "strategy" | "demo" | "exchange" | "access";
+
+const EXCHANGE_NAMES = ["Binance", "Coinbase", "Kraken", "OKX", "Bybit"];
 
 export default function DashboardSettingsPage() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -29,6 +31,9 @@ export default function DashboardSettingsPage() {
   const [riskPerTrade, setRiskPerTrade] = useState(1);
   const [defaultSize, setDefaultSize] = useState(1);
   const [leverage, setLeverage] = useState(100);
+  const [exchangeRows, setExchangeRows] = useState<any[]>([]);
+  const [exchangeDrafts, setExchangeDrafts] = useState<Record<string, { apiKey: string; secret: string; isActive: boolean }>>({});
+  const [liveModeRequested, setLiveModeRequested] = useState(false);
 
   async function load() {
     const { data } = await supabase.auth.getUser();
@@ -50,10 +55,18 @@ export default function DashboardSettingsPage() {
     setRiskPerTrade(Number(profileRow?.risk_percent ?? (Number(settingsRow?.risk_per_trade ?? 0.01) * 100)));
     setDefaultSize(Number(settingsRow?.default_size ?? 1));
     setLeverage(Number(settingsRow?.leverage ?? 100));
+
+    const exchangeResponse = await fetch("/api/arb/exchange/keys").catch(() => null);
+    const exchangePayload = exchangeResponse ? await exchangeResponse.json().catch(() => null) : null;
+    setExchangeRows(Array.isArray(exchangePayload?.exchanges) ? exchangePayload.exchanges : []);
   }
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "exchange") setTab("exchange");
   }, []);
 
   async function saveAccount() {
@@ -135,6 +148,53 @@ export default function DashboardSettingsPage() {
     setLoading(false);
   }
 
+  function patchExchange(exchangeName: string, value: Partial<{ apiKey: string; secret: string; isActive: boolean }>) {
+    setExchangeDrafts((current) => ({
+      ...current,
+      [exchangeName]: {
+        apiKey: current[exchangeName]?.apiKey || "",
+        secret: current[exchangeName]?.secret || "",
+        isActive: current[exchangeName]?.isActive ?? Boolean(exchangeRows.find((row) => row.exchangeName === exchangeName)?.isActive),
+        ...value,
+      },
+    }));
+  }
+
+  async function saveExchange(exchangeName: string) {
+    const draft = exchangeDrafts[exchangeName];
+    if (!draft?.apiKey || !draft?.secret) {
+      setMessage("Add both API key and secret before saving.");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    const response = await fetch("/api/arb/exchange/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exchangeName, ...draft }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    setMessage(response.ok ? `${exchangeName} API keys saved encrypted. Paper mode remains active.` : payload.error || "Exchange save failed");
+    setExchangeDrafts((current) => ({ ...current, [exchangeName]: { apiKey: "", secret: "", isActive: draft.isActive } }));
+    await load();
+    setLoading(false);
+  }
+
+  async function testExchange(exchangeName: string) {
+    setLoading(true);
+    setMessage("");
+    const response = await fetch("/api/arb/exchange/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exchangeName }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    setMessage(payload.message || (response.ok ? `${exchangeName} checked.` : payload.error || "Connection test failed"));
+    setLoading(false);
+  }
+
+  const connectedExchanges = exchangeRows.filter((row) => row.hasApiKey && row.hasSecret && row.isActive).length;
+
   return (
     <div className="space-y-7">
       <DashboardPageHeader
@@ -144,7 +204,7 @@ export default function DashboardSettingsPage() {
       />
 
       <div className="flex flex-wrap gap-2">
-        {(["profile", "strategy", "demo", "access"] as Tab[]).map((item) => (
+        {(["profile", "strategy", "demo", "exchange", "access"] as Tab[]).map((item) => (
           <button key={item} onClick={() => setTab(item)} className={`rounded-full border px-4 py-2 text-sm capitalize ${tab === item ? "border-cyan-300/50 bg-cyan-300/10 text-white" : "border-white/10 text-slate-400"}`}>
             {item}
           </button>
@@ -203,6 +263,76 @@ export default function DashboardSettingsPage() {
             <label className="text-sm text-slate-400">Default lot size<input type="number" min="0.01" step="0.01" value={defaultSize} onChange={(event) => setDefaultSize(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white" /></label>
             <label className="text-sm text-slate-400">Leverage<select value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/25 px-3 font-mono text-white">{[20, 50, 100, 200, 500, 1000].map((value) => <option key={value} value={value}>1:{value}</option>)}</select></label>
             <div className="md:col-span-4"><Button onClick={saveDemo} disabled={loading} className="rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200">Save demo account</Button></div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "exchange" && (
+        <Card className="rounded-3xl border-emerald-300/15 bg-[#06130b]/90">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-white">
+              <KeyRound className="h-4 w-4 text-emerald-200" />
+              Exchange API Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+              Keys are stored encrypted server-side. Arb Engine stays paper-only; live trading mode is disabled until at least two exchanges are connected and a separate live execution flow is enabled.
+            </div>
+
+            <div className="grid gap-3">
+              {EXCHANGE_NAMES.map((exchangeName) => {
+                const row = exchangeRows.find((item) => item.exchangeName === exchangeName);
+                const draft = exchangeDrafts[exchangeName] || { apiKey: "", secret: "", isActive: Boolean(row?.isActive) };
+                return (
+                  <div key={exchangeName} className="grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 lg:grid-cols-[150px_1fr_1fr_120px_120px] lg:items-center">
+                    <div>
+                      <div className="font-semibold text-white">{exchangeName}</div>
+                      <div className={row?.hasApiKey && row?.hasSecret ? "text-xs text-emerald-200" : "text-xs text-slate-500"}>
+                        {row?.hasApiKey && row?.hasSecret ? "Stored" : "Not connected"}
+                      </div>
+                    </div>
+                    <input
+                      type="password"
+                      value={draft.apiKey}
+                      onChange={(event) => patchExchange(exchangeName, { apiKey: event.target.value })}
+                      placeholder={row?.hasApiKey ? "API key saved" : "API key"}
+                      className="h-11 rounded-xl border border-white/10 bg-black/25 px-3 text-sm text-white outline-none focus:border-emerald-300/40"
+                    />
+                    <input
+                      type="password"
+                      value={draft.secret}
+                      onChange={(event) => patchExchange(exchangeName, { secret: event.target.value })}
+                      placeholder={row?.hasSecret ? "Secret saved" : "Secret"}
+                      className="h-11 rounded-xl border border-white/10 bg-black/25 px-3 text-sm text-white outline-none focus:border-emerald-300/40"
+                    />
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(draft.isActive)}
+                        onChange={(event) => patchExchange(exchangeName, { isActive: event.target.checked })}
+                      />
+                      Active
+                    </label>
+                    <div className="flex gap-2">
+                      <Button onClick={() => saveExchange(exchangeName)} disabled={loading} variant="glass" className="h-10 rounded-xl px-3">Save</Button>
+                      <Button onClick={() => testExchange(exchangeName)} disabled={loading} variant="glass" className="h-10 rounded-xl px-3">Test</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 font-semibold text-white"><PlugZap className="h-4 w-4 text-emerald-200" /> Live trading mode</div>
+                <div className="text-sm text-slate-400">{connectedExchanges}/2 required exchange connections. Disabled for this paper-trading phase.</div>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={liveModeRequested} onChange={(event) => setLiveModeRequested(event.target.checked)} disabled={connectedExchanges < 2} />
+                Request live mode
+              </label>
+            </div>
           </CardContent>
         </Card>
       )}
