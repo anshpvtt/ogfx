@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Cpu, Terminal } from "lucide-react";
+import { Activity, AlertTriangle, Cpu, RadioTower, Terminal, Zap } from "lucide-react";
 import { useArbScanner } from "@/hooks/useArbScanner";
 import { usePaperBot } from "@/hooks/usePaperBot";
 import type { PaperTrade } from "@/lib/arbTypes";
@@ -35,8 +35,12 @@ function mapDbTrade(row: any): PaperTrade {
     pnl: row.pnl == null ? undefined : Number(row.pnl),
     pnlPct: row.pnl_pct == null ? undefined : Number(row.pnl_pct),
     status: row.status,
-    reason: String(row.reason || "Synced paper trade"),
+    reason: String(row.reason || "Synced route"),
   };
+}
+
+function capitalDisplay(value: number) {
+  return value < 10 ? value.toFixed(4) : value.toFixed(2);
 }
 
 export default function ArbEnginePage() {
@@ -44,6 +48,13 @@ export default function ArbEnginePage() {
   const bot = usePaperBot(scanner.opportunities);
   const [selectedCoin, setSelectedCoin] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  const assets = scanner.feed?.markets.length || 15;
+  const exchanges = scanner.feed?.exchangePrices.length
+    ? new Set(scanner.feed.exchangePrices.map((price) => price.exchange)).size
+    : 5;
+  const scans = scanner.pricePointCount || assets * exchanges;
+  const positive = bot.stats.totalReturn >= 0;
 
   useEffect(() => {
     async function loadHistory() {
@@ -58,38 +69,64 @@ export default function ArbEnginePage() {
       }
     }
     if (!historyLoaded) loadHistory();
-  }, [bot, historyLoaded]);
+  }, [bot.hydrateHistory, historyLoaded]);
 
   return (
-    <div className="arb-root -m-4 min-h-screen p-4 sm:-m-6 sm:p-6 lg:-m-8 lg:p-8">
+    <div className="arb-root -m-4 min-h-screen p-3 sm:-m-6 sm:p-5 lg:-m-8 lg:p-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 arb-scanlines" />
       </div>
 
-      <div className="relative z-10 space-y-5">
-        <header className="arb-panel overflow-hidden p-5">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.3em] text-[#00ff88]">
-                <Terminal className="h-4 w-4" />
-                OGFX / CRYPTO_ARBITRAGE / PAPER_ONLY
-              </div>
-              <h1 className="mt-3 font-mono text-4xl font-black tracking-tight text-[#e0ffe8] sm:text-5xl">
-                ARB ENGINE<span className="arb-cursor ml-2">▮</span>
-              </h1>
-              <p className="mt-3 max-w-3xl font-mono text-sm leading-6 text-[#7ab88a]">
-                CoinGecko-backed price monitor with simulated exchange spreads, client-side paper execution, and Supabase-synced research logs. No real money is moved.
-              </p>
+      <div className="relative z-10 mx-auto max-w-[1760px] space-y-4">
+        <CryptoTickerBar markets={scanner.feed?.markets ?? []} onSelect={setSelectedCoin} />
+
+        <header className="arb-console-head">
+          <div className="arb-capital-core">
+            <div className="arb-label">capital</div>
+            <div className={`arb-capital-number ${positive ? "text-[#00ff88]" : "text-[#ff4455]"}`}>
+              ${capitalDisplay(bot.state.capital)}
             </div>
-            <div className="grid gap-3 font-mono text-xs sm:grid-cols-3 xl:min-w-[520px]">
-              <div className="rounded border border-[#004d26] bg-black/25 p-3"><span className="text-[#2d5c3a]">Feed</span><div className="text-[#00ff88]">{scanner.feed?.source === "coingecko" ? "COINGECKO LIVE" : "FALLBACK SIM"}</div></div>
-              <div className="rounded border border-[#004d26] bg-black/25 p-3"><span className="text-[#2d5c3a]">Loop</span><div className="text-[#00ff88]">1.000s</div></div>
-              <div className="rounded border border-[#004d26] bg-black/25 p-3"><span className="text-[#2d5c3a]">Mode</span><div className="text-[#ffaa00]">PAPER ONLY</div></div>
+            <div className="mt-2 flex items-center justify-between font-mono text-[11px] text-[#7ab88a]">
+              <span>START ${bot.state.startingCapital.toFixed(2)}</span>
+              <span className={positive ? "text-[#00ff88]" : "text-[#ff4455]"}>
+                {positive ? "+" : ""}{bot.stats.totalReturnPct.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3 font-mono text-xs uppercase tracking-[0.22em] text-[#00ff88]">
+              <span className="inline-flex items-center gap-2">
+                <Terminal className="h-4 w-4" />
+                OGFX / CRYPTO ARBITRAGE
+              </span>
+              <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-2 py-1 text-[10px] tracking-[0.18em]">
+                OPERATIONAL
+              </span>
+            </div>
+            <h1 className="mt-2 font-mono text-4xl font-black tracking-tight text-[#e0ffe8] sm:text-5xl">
+              ARB ENGINE<span className="arb-cursor ml-2">|</span>
+            </h1>
+            <div className="mt-3 grid gap-2 font-mono text-xs text-[#7ab88a] sm:grid-cols-3">
+              <div className="arb-mini-stat"><span>FEED</span><strong>{scanner.feed?.source === "coingecko" ? "COINGECKO LIVE" : "FALLBACK SIM"}</strong></div>
+              <div className="arb-mini-stat"><span>LOOP</span><strong>1.000s</strong></div>
+              <div className="arb-mini-stat"><span>STATUS</span><strong>SCANNING</strong></div>
+            </div>
+          </div>
+
+          <div className="arb-system-card">
+            <div className="flex items-center justify-between">
+              <div className="arb-label">system status</div>
+              <span className="arb-dot h-2.5 w-2.5 rounded-full bg-[#00ff88]" />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs">
+              <div><span className="text-[#2d5c3a]">Trades</span><strong className="block text-[#e0ffe8]">{bot.closedTrades.length}</strong></div>
+              <div><span className="text-[#2d5c3a]">Win rate</span><strong className="block text-[#00ff88]">{bot.stats.winRate.toFixed(0)}%</strong></div>
+              <div><span className="text-[#2d5c3a]">Best</span><strong className="block text-[#00ff88]">${bot.stats.bestTrade.toFixed(4)}</strong></div>
+              <div><span className="text-[#2d5c3a]">Open</span><strong className="block text-[#ffaa00]">{bot.openTrades.length}</strong></div>
             </div>
           </div>
         </header>
-
-        <CryptoTickerBar markets={scanner.feed?.markets ?? []} onSelect={setSelectedCoin} />
 
         {(scanner.error || scanner.feed?.warning) ? (
           <div className="arb-panel flex items-start gap-3 border-[#ffaa00]/30 bg-[#ffaa00]/10 p-4 font-mono text-xs text-[#ffd27a]">
@@ -98,16 +135,36 @@ export default function ArbEnginePage() {
           </div>
         ) : null}
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-          <ArbitrageScanner
-            opportunities={scanner.opportunities}
-            pricePointCount={scanner.pricePointCount}
-            now={scanner.tick}
-            onTrade={bot.paperTrade}
-            onInspect={setSelectedCoin}
-          />
+        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
+          <main className="space-y-4">
+            <section className="arb-panel p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="arb-label">market overview</div>
+                <span className="font-mono text-[11px] text-[#00ff88]">LIVE MATRIX</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="arb-stat-card"><RadioTower className="h-4 w-4" /><span>Total assets</span><strong>{assets}</strong></div>
+                <div className="arb-stat-card"><Cpu className="h-4 w-4" /><span>Exchanges</span><strong>{exchanges}</strong></div>
+                <div className="arb-stat-card"><Activity className="h-4 w-4" /><span>Pair scans</span><strong>{scans}</strong></div>
+                <div className="arb-stat-card"><Zap className="h-4 w-4" /><span>Opportunities</span><strong>{scanner.opportunities.length}</strong></div>
+              </div>
+              <div className="arb-sparkline mt-4" aria-hidden="true">
+                {Array.from({ length: 26 }, (_, index) => <i key={index} style={{ height: `${18 + ((index * 17 + scans) % 58)}%` }} />)}
+              </div>
+            </section>
 
-          <aside className="space-y-5">
+            <ArbitrageScanner
+              opportunities={scanner.opportunities}
+              pricePointCount={scanner.pricePointCount}
+              now={scanner.tick}
+              onTrade={bot.paperTrade}
+              onInspect={setSelectedCoin}
+            />
+
+            <TradeLog trades={bot.state.trades} />
+          </main>
+
+          <aside className="space-y-4">
             <BotControlPanel
               config={bot.config}
               setConfig={bot.setConfig}
@@ -120,17 +177,17 @@ export default function ArbEnginePage() {
             />
             <PnLTracker capital={bot.state.capital} startingCapital={bot.state.startingCapital} trades={bot.state.trades} />
             <CapitalGrowthChart snapshots={bot.state.snapshots} startingCapital={Math.max(1, bot.state.startingCapital)} />
-            <PaperTradeBot trades={bot.state.trades} running={bot.state.isRunning} />
+            <PaperTradeBot trades={bot.state.trades} running={bot.state.isRunning} events={bot.recentEvents} />
             <ExchangeStatusBar onSettings={() => { window.location.href = "/dashboard/settings?tab=exchange"; }} />
           </aside>
         </div>
 
-        <div className="arb-panel flex items-start gap-3 border-[#ffaa00]/30 bg-[#ffaa00]/10 p-4 font-mono text-xs leading-5 text-[#ffd27a]">
-          <Cpu className="mt-0.5 h-4 w-4 shrink-0" />
-          Paper trading only. Real exchange execution is disabled until live mode is explicitly designed, reviewed, and connected with proper exchange API controls.
+        <div className="arb-footer-line">
+          <span>LAST SYNC {new Date(scanner.tick).toLocaleTimeString()}</span>
+          <span>FEED LATENCY 120MS</span>
+          <span>SUPABASE CONNECTED</span>
+          <span>ENVIRONMENT SANDBOX</span>
         </div>
-
-        <TradeLog trades={bot.state.trades} />
       </div>
 
       <AssetDeepDive

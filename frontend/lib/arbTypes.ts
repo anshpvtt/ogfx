@@ -101,6 +101,16 @@ export type PaperBotEvent =
   | { type: "closed"; trade: PaperTrade }
   | { type: "snapshot"; capital: number; time: number };
 
+export type ExecutionTapeEvent = {
+  id: string;
+  type: "opened" | "closed";
+  tone: "entry" | "profit" | "loss";
+  title: string;
+  message: string;
+  trade: PaperTrade;
+  timestamp: number;
+};
+
 export type Ticker = {
   symbol: string;
   price: number;

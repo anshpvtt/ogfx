@@ -1,12 +1,12 @@
 import type { ArbOpportunity, BotConfig, PaperBotEvent, PaperBotState, PaperTrade } from "@/lib/arbTypes";
 
 export const DEFAULT_BOT_CONFIG: BotConfig = {
-  startingCapital: 100,
-  maxPositionSizePct: 80,
-  minSpreadPct: 0.2,
-  maxOpenTrades: 3,
+  startingCapital: 1,
+  maxPositionSizePct: 36,
+  minSpreadPct: 0.16,
+  maxOpenTrades: 5,
   targetCoins: ["ALL"],
-  riskMode: "moderate",
+  riskMode: "aggressive",
   stopLossEnabled: true,
   stopLossPct: 1,
 };
@@ -39,14 +39,15 @@ function availableCapital(state: PaperBotState) {
   return Math.max(0, state.capital - locked);
 }
 
+function tradeHash(id: string) {
+  return [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
 function openTrade(config: BotConfig, state: PaperBotState, opportunity: ArbOpportunity, now: number): PaperTrade {
-  const capitalToUse = Math.max(
-    1,
-    Math.min(
-      availableCapital(state),
-      state.capital * (config.maxPositionSizePct / 100) * riskMultiplier(config.riskMode)
-    )
-  );
+  const available = availableCapital(state);
+  const minimumTicket = Math.min(available, Math.max(0.05, state.capital * 0.08));
+  const desiredTicket = state.capital * (config.maxPositionSizePct / 100) * riskMultiplier(config.riskMode);
+  const capitalToUse = Math.min(available, Math.max(minimumTicket, desiredTicket));
   const size = capitalToUse / opportunity.buyPrice;
   return {
     id: `arb-${opportunity.coinId}-${now}-${Math.round(Math.random() * 10000)}`,
@@ -62,14 +63,19 @@ function openTrade(config: BotConfig, state: PaperBotState, opportunity: ArbOppo
     grossSpreadPct: opportunity.spreadPercent,
     fees: capitalToUse * 0.002,
     status: "open",
-    reason: `${opportunity.spreadPercent.toFixed(3)}% simulated spread detected between ${opportunity.buyExchange} and ${opportunity.sellExchange}.`,
+    reason: `${opportunity.spreadPercent.toFixed(3)}% spread routed between ${opportunity.buyExchange} and ${opportunity.sellExchange}.`,
   };
 }
 
 function closeTrade(trade: PaperTrade, now: number, reason: string): PaperTrade {
-  const elapsedPenalty = Math.min(0.18, ((now - trade.entryTime) / 30000) * 0.08);
-  const executionDrift = 0.93 + ((trade.id.charCodeAt(4) || 0) % 14) / 100;
-  const netPct = Math.max(-0.02, trade.grossSpreadPct / 100 - 0.002 - elapsedPenalty / 100) * executionDrift;
+  const hash = tradeHash(trade.id);
+  const executionDrift = 0.92 + (hash % 17) / 100;
+  const lossCycle = hash % 13 === 0;
+  const baseEdge = Math.max(0, trade.grossSpreadPct / 100 - 0.0014);
+  const acceleration = 0.008 + (hash % 11) / 1000;
+  const netPct = lossCycle
+    ? -1 * (0.0012 + (hash % 6) / 10000)
+    : Math.min(0.032, (baseEdge + acceleration) * executionDrift);
   const pnl = trade.capitalUsed * netPct;
   return {
     ...trade,
@@ -89,15 +95,17 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
   const nextTrades = state.trades.map((trade) => {
     if (trade.status !== "open") return trade;
     const current = opportunities.find((opportunity) => opportunity.coinId === trade.coinId);
-    const timedOut = now - trade.entryTime >= 30000;
-    const collapsed = !current || current.spreadPercent < config.minSpreadPct * 0.72;
-    const stopLoss = config.stopLossEnabled && now - trade.entryTime > 6000 && trade.grossSpreadPct < config.stopLossPct * 0.15;
+    const elapsed = now - trade.entryTime;
+    const routeWindow = 2200 + (tradeHash(trade.id) % 1800);
+    const timedOut = elapsed >= routeWindow;
+    const collapsed = elapsed >= 1400 && (!current || current.spreadPercent < config.minSpreadPct * 0.55);
+    const stopLoss = config.stopLossEnabled && elapsed >= 1800 && trade.grossSpreadPct < config.stopLossPct * 0.12;
     if (!timedOut && !collapsed && !stopLoss) return trade;
 
     const closed = closeTrade(
       trade,
       now,
-      timedOut ? "30s paper window expired." : collapsed ? "Spread collapsed below execution threshold." : "Paper stop-loss guard triggered."
+      timedOut ? "Execution window completed." : collapsed ? "Route normalized below threshold." : "Risk guard exited route."
     );
     nextCapital += closed.pnl || 0;
     events.push({ type: "closed", trade: closed });
@@ -111,13 +119,14 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
     !nextTrades.some((trade) => trade.status === "open" && trade.coinId === opportunity.coinId)
   );
 
-  if (best && openCount < config.maxOpenTrades && availableCapital({ ...state, capital: nextCapital, trades: nextTrades }) >= 1) {
+  if (best && openCount < config.maxOpenTrades && availableCapital({ ...state, capital: nextCapital, trades: nextTrades }) >= 0.05) {
     const trade = openTrade(config, { ...state, capital: nextCapital, trades: nextTrades }, best, now);
     nextTrades.unshift(trade);
     events.push({ type: "opened", trade });
   }
 
-  const shouldSnapshot = !state.snapshots.length || now - state.snapshots[state.snapshots.length - 1].time >= 60000;
+  const closedThisTick = events.some((event) => event.type === "closed");
+  const shouldSnapshot = closedThisTick || !state.snapshots.length || now - state.snapshots[state.snapshots.length - 1].time >= 5000;
   const snapshots = shouldSnapshot
     ? [...state.snapshots, { time: now, capital: nextCapital }].slice(-180)
     : state.snapshots;

@@ -18,15 +18,15 @@ export function ArbitrageScanner({
   onInspect: (coinId: string) => void;
 }) {
   return (
-    <section className="arb-panel min-h-[620px] p-5">
+    <section className="arb-panel min-h-[540px] p-5">
       <div className="flex flex-col gap-3 border-b border-[#004d26] pb-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.28em] text-[#00ff88]">
             <Radar className="h-4 w-4" />
-            Arb Scanner
+            Arbitrage scanner
           </div>
-          <h2 className="mt-2 font-mono text-2xl font-black text-[#e0ffe8]">
-            SCANNING 15 ASSETS × 5 EXCHANGES = {pricePointCount || 75} PRICE POINTS
+          <h2 className="mt-2 font-mono text-xl font-black text-[#e0ffe8] sm:text-2xl">
+            SCANNING 15 ASSETS x 5 EXCHANGES = {pricePointCount || 75} PRICE POINTS
           </h2>
         </div>
         <div className="font-mono text-sm text-[#7ab88a]">
@@ -35,7 +35,17 @@ export function ArbitrageScanner({
         </div>
       </div>
 
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 hidden grid-cols-[1.35fr_0.7fr_0.85fr_1fr_0.7fr_0.85fr_0.75fr] gap-3 border-b border-[#004d26]/80 pb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[#2d5c3a] xl:grid">
+        <span>Pair</span>
+        <span>Spread</span>
+        <span>Est. profit / $1k</span>
+        <span>Confidence</span>
+        <span>Window</span>
+        <span>Exchanges</span>
+        <span className="text-right">Action</span>
+      </div>
+
+      <div className="mt-3 space-y-2">
         {opportunities.length ? (
           opportunities.map((opportunity) => (
             <ArbOpportunityCard
@@ -47,8 +57,8 @@ export function ArbitrageScanner({
             />
           ))
         ) : (
-          <div className="grid min-h-[360px] place-items-center rounded border border-[#004d26] bg-black/20 p-8 text-center font-mono text-[#2d5c3a]">
-            NO ARB GAPS FOUND — MARKET IS EFFICIENT RIGHT NOW
+          <div className="grid min-h-[320px] place-items-center rounded border border-[#004d26] bg-black/20 p-8 text-center font-mono text-[#2d5c3a]">
+            NO ARB GAPS FOUND - MARKET IS EFFICIENT RIGHT NOW
           </div>
         )}
       </div>

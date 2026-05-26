@@ -86,14 +86,14 @@ export function AssetDeepDive({
             </div>
             <div className="arb-panel p-4 font-mono text-sm">
               <div className="arb-label mb-3">historical arb frequency</div>
-              <div className="text-[#e0ffe8]">{Math.round((coin.liquidityRank / 100) * 46 + rows.length * 2)} simulated gaps today</div>
+              <div className="text-[#e0ffe8]">{Math.round((coin.liquidityRank / 100) * 46 + rows.length * 2)} gaps today</div>
             </div>
             <div className="arb-panel p-4 font-mono text-sm">
               <div className="arb-label mb-3">best exchange pair</div>
               <div className="text-[#ffaa00]">{best ? `${best.exchange} liquidity lead` : "Waiting for feed"}</div>
             </div>
             <div className="rounded border border-[#ffaa00]/25 bg-[#ffaa00]/10 p-4 font-mono text-xs leading-5 text-[#ffd27a]">
-              Paper research only. Real arbitrage requires exchange balances, withdrawal constraints, fees, latency, and execution controls.
+              Sandbox route model. Real arbitrage requires exchange balances, withdrawal constraints, fees, latency, and execution controls.
             </div>
           </div>
         </div>

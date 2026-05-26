@@ -161,7 +161,7 @@ class StubExchangeAdapter implements ExchangeAdapter {
 
   private assertConfigured() {
     if (!this.apiKey || !this.secret) {
-      throw new Error(`${this.name} adapter is not configured. Paper simulation remains active.`);
+      throw new Error(`${this.name} adapter is not configured. Sandbox simulator remains active.`);
     }
   }
 

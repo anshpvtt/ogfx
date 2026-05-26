@@ -19,13 +19,14 @@ export function CapitalGrowthChart({
   const target = 100000;
   const tradesNeeded = Math.log(target / Math.max(1, startingCapital)) / Math.log(1.003);
   const hours = tradesNeeded / 20;
+  const money = (value: number) => `$${Math.abs(value) < 10 ? value.toFixed(4) : value.toFixed(2)}`;
 
   return (
     <section className="arb-panel p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="arb-label">capital curve</div>
-          <h3 className="font-mono text-lg font-black text-[#e0ffe8]">$1 → $100k SIM</h3>
+          <h3 className="font-mono text-lg font-black text-[#e0ffe8]">$1 TO $100k PATH</h3>
         </div>
         <div className="font-mono text-xs text-[#ffaa00]">~{Math.max(1, hours / 24).toFixed(1)} days</div>
       </div>
@@ -42,7 +43,7 @@ export function CapitalGrowthChart({
             <YAxis hide domain={["dataMin", "dataMax"]} />
             <Tooltip
               contentStyle={{ background: "#020c07", border: "1px solid rgba(0,255,136,0.25)", color: "#e0ffe8", fontFamily: "monospace" }}
-              formatter={(value: any) => [`$${Number(value).toFixed(2)}`, "capital"]}
+              formatter={(value: any) => [money(Number(value)), "capital"]}
               labelFormatter={(value) => new Date(Number(value)).toLocaleTimeString()}
             />
             <Area type="monotone" dataKey="capital" stroke="#00ff88" strokeWidth={2} fill="url(#arbCapital)" dot={false} />
@@ -50,7 +51,7 @@ export function CapitalGrowthChart({
         </ResponsiveContainer>
       </div>
       <p className="mt-3 rounded border border-[#ffaa00]/25 bg-[#ffaa00]/10 p-3 font-mono text-[11px] leading-5 text-[#ffd27a]">
-        Theoretical paper simulation. Real exchanges have fees, slippage, latency, API limits, partial fills, and market risk.
+        Theoretical simulator. Real exchanges have fees, slippage, latency, API limits, partial fills, and market risk.
       </p>
     </section>
   );

@@ -174,7 +174,7 @@ export default function DashboardSettingsPage() {
       body: JSON.stringify({ exchangeName, ...draft }),
     });
     const payload = await response.json().catch(() => ({}));
-    setMessage(response.ok ? `${exchangeName} API keys saved encrypted. Paper mode remains active.` : payload.error || "Exchange save failed");
+    setMessage(response.ok ? `${exchangeName} API keys saved encrypted. Sandbox route layer remains active.` : payload.error || "Exchange save failed");
     setExchangeDrafts((current) => ({ ...current, [exchangeName]: { apiKey: "", secret: "", isActive: draft.isActive } }));
     await load();
     setLoading(false);
@@ -277,7 +277,7 @@ export default function DashboardSettingsPage() {
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
-              Keys are stored encrypted server-side. Arb Engine stays paper-only; live trading mode is disabled until at least two exchanges are connected and a separate live execution flow is enabled.
+              Keys are stored encrypted server-side. Arb Engine stays in sandbox routing; live trading mode is disabled until at least two exchanges are connected and a separate live execution flow is enabled.
             </div>
 
             <div className="grid gap-3">
@@ -326,7 +326,7 @@ export default function DashboardSettingsPage() {
             <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2 font-semibold text-white"><PlugZap className="h-4 w-4 text-emerald-200" /> Live trading mode</div>
-                <div className="text-sm text-slate-400">{connectedExchanges}/2 required exchange connections. Disabled for this paper-trading phase.</div>
+                <div className="text-sm text-slate-400">{connectedExchanges}/2 required exchange connections. Disabled for this sandbox phase.</div>
               </div>
               <label className="inline-flex items-center gap-2 text-sm text-slate-300">
                 <input type="checkbox" checked={liveModeRequested} onChange={(event) => setLiveModeRequested(event.target.checked)} disabled={connectedExchanges < 2} />

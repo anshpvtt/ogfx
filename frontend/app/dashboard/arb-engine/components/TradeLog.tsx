@@ -7,7 +7,8 @@ import type { PaperTrade } from "@/lib/arbTypes";
 type Tab = "open" | "closed" | "all";
 
 function money(value?: number) {
-  return `$${Number(value || 0).toFixed(2)}`;
+  const numeric = Number(value || 0);
+  return `$${Math.abs(numeric) < 10 ? numeric.toFixed(4) : numeric.toFixed(2)}`;
 }
 
 export function TradeLog({ trades }: { trades: PaperTrade[] }) {
@@ -18,6 +19,7 @@ export function TradeLog({ trades }: { trades: PaperTrade[] }) {
   }, [tab, trades]);
   const open = trades.filter((trade) => trade.status === "open").length;
   const closed = trades.filter((trade) => trade.status === "closed").length;
+  const now = Date.now();
 
   function exportCsv() {
     const header = ["time", "coin", "buy_exchange", "sell_exchange", "size", "capital", "pnl", "pnl_pct", "status"];
@@ -46,10 +48,10 @@ export function TradeLog({ trades }: { trades: PaperTrade[] }) {
       <div className="flex flex-col gap-3 border-b border-[#004d26] pb-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="arb-label">trade log</div>
-          <h3 className="font-mono text-xl font-black text-[#e0ffe8]">REAL-TIME PAPER FILLS</h3>
+          <h3 className="font-mono text-xl font-black text-[#e0ffe8]">REAL-TIME FILLS</h3>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-3 py-1 font-mono text-xs text-[#00ff88]">Supabase synced ✓</span>
+          <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-3 py-1 font-mono text-xs text-[#00ff88]">Supabase connected</span>
           <button type="button" onClick={exportCsv} className="inline-flex items-center gap-2 rounded border border-[#004d26] px-3 py-1.5 font-mono text-xs text-[#7ab88a] hover:text-[#00ff88]">
             <Download className="h-3.5 w-3.5" /> CSV
           </button>
@@ -83,22 +85,26 @@ export function TradeLog({ trades }: { trades: PaperTrade[] }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((trade) => (
-              <tr key={trade.id} className="border-b border-[#004d26]/70 text-[#e0ffe8]">
-                <td className="px-3 py-2 text-[#7ab88a]">{new Date(trade.entryTime).toLocaleTimeString()}</td>
-                <td className="px-3 py-2">{trade.coin}</td>
-                <td className="px-3 py-2">{trade.buyExchange} {money(trade.buyPrice)}</td>
-                <td className="px-3 py-2">{trade.sellExchange} {money(trade.sellPrice)}</td>
-                <td className="px-3 py-2">{trade.size.toFixed(6)}</td>
-                <td className="px-3 py-2">{money(trade.capitalUsed)}</td>
-                <td className={`px-3 py-2 ${Number(trade.pnl || 0) >= 0 ? "text-[#00ff88]" : "text-[#ff4455]"}`}>{trade.pnl == null ? "-" : money(trade.pnl)}</td>
-                <td className={`px-3 py-2 ${Number(trade.pnlPct || 0) >= 0 ? "text-[#00ff88]" : "text-[#ff4455]"}`}>{trade.pnlPct == null ? "-" : `${trade.pnlPct.toFixed(3)}%`}</td>
-                <td className="px-3 py-2 uppercase text-[#ffaa00]">{trade.status}</td>
-              </tr>
-            ))}
+            {filtered.map((trade) => {
+              const fresh = now - (trade.exitTime || trade.entryTime) < 6500;
+              const pnl = Number(trade.pnl || 0);
+              return (
+                <tr key={trade.id} className={`border-b border-[#004d26]/70 text-[#e0ffe8] ${fresh ? pnl < 0 ? "arb-row-loss" : "arb-row-profit" : ""}`}>
+                  <td className="px-3 py-2 text-[#7ab88a]">{new Date(trade.entryTime).toLocaleTimeString()}</td>
+                  <td className="px-3 py-2">{trade.coin}</td>
+                  <td className="px-3 py-2">{trade.buyExchange} {money(trade.buyPrice)}</td>
+                  <td className="px-3 py-2">{trade.sellExchange} {money(trade.sellPrice)}</td>
+                  <td className="px-3 py-2">{trade.size.toFixed(8)}</td>
+                  <td className="px-3 py-2">{money(trade.capitalUsed)}</td>
+                  <td className={`px-3 py-2 ${pnl >= 0 ? "text-[#00ff88]" : "text-[#ff4455]"}`}>{trade.pnl == null ? "-" : money(trade.pnl)}</td>
+                  <td className={`px-3 py-2 ${Number(trade.pnlPct || 0) >= 0 ? "text-[#00ff88]" : "text-[#ff4455]"}`}>{trade.pnlPct == null ? "-" : `${trade.pnlPct.toFixed(3)}%`}</td>
+                  <td className="px-3 py-2 uppercase text-[#ffaa00]">{trade.status}</td>
+                </tr>
+              );
+            })}
             {!filtered.length ? (
               <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-[#2d5c3a]">NO PAPER TRADES LOGGED</td>
+                <td colSpan={9} className="px-3 py-10 text-center text-[#2d5c3a]">NO TRADES LOGGED</td>
               </tr>
             ) : null}
           </tbody>

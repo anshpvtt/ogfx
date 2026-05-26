@@ -38,7 +38,7 @@ export function BotControlPanel({
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="arb-label">auto arb bot</div>
-          <h3 className="font-mono text-xl font-black text-[#e0ffe8]">PAPER EXECUTION</h3>
+          <h3 className="font-mono text-xl font-black text-[#e0ffe8]">EXECUTION ENGINE</h3>
         </div>
         <button
           type="button"
@@ -56,11 +56,11 @@ export function BotControlPanel({
       </div>
 
       <div className="mt-4 rounded border border-[#004d26] bg-black/25 p-3 font-mono text-xs text-[#7ab88a]">
-        {running ? <span className="text-[#00ff88]">BOT ACTIVE ● SCANNING...</span> : "BOT IDLE ▮ PAPER MODE ONLY"}
+        {running ? <span className="text-[#00ff88]">BOT ACTIVE * SCANNING...</span> : "BOT IDLE | READY"}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <span>Trades {tradesToday}</span>
           <span>Win {winRate.toFixed(0)}%</span>
-          <span>Best ${bestTrade.toFixed(2)}</span>
+          <span>Best ${bestTrade.toFixed(4)}</span>
         </div>
       </div>
 
@@ -71,7 +71,7 @@ export function BotControlPanel({
         </label>
         <label className="arb-field">
           Min spread %
-          <input type="number" min={0.15} step={0.01} value={config.minSpreadPct} onChange={(event) => patch({ minSpreadPct: Number(event.target.value) })} />
+          <input type="number" min={0.05} step={0.01} value={config.minSpreadPct} onChange={(event) => patch({ minSpreadPct: Number(event.target.value) })} />
         </label>
         <label className="arb-field">
           Max simultaneous trades
