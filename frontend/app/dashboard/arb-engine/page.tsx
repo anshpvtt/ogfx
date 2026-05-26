@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, Cpu, RadioTower, Terminal, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Activity, AlertTriangle, Cpu, Maximize2, Minimize2, RadioTower, Terminal, Zap } from "lucide-react";
 import { useArbScanner } from "@/hooks/useArbScanner";
 import { usePaperBot } from "@/hooks/usePaperBot";
 import type { PaperTrade } from "@/lib/arbTypes";
@@ -40,7 +40,10 @@ function mapDbTrade(row: any): PaperTrade {
 }
 
 function capitalDisplay(value: number) {
-  return value < 10 ? value.toFixed(4) : value.toFixed(2);
+  if (value >= 100000) return value.toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 2 });
+  if (value >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  if (value >= 10) return value.toFixed(2);
+  return value.toFixed(3);
 }
 
 export default function ArbEnginePage() {
@@ -48,6 +51,8 @@ export default function ArbEnginePage() {
   const bot = usePaperBot(scanner.opportunities);
   const [selectedCoin, setSelectedCoin] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const arbRootRef = useRef<HTMLDivElement | null>(null);
 
   const assets = scanner.feed?.markets.length || 15;
   const exchanges = scanner.feed?.exchangePrices.length
@@ -71,8 +76,28 @@ export default function ArbEnginePage() {
     if (!historyLoaded) loadHistory();
   }, [bot.hydrateHistory, historyLoaded]);
 
+  useEffect(() => {
+    function syncFullscreen() {
+      setIsFullscreen(document.fullscreenElement === arbRootRef.current);
+    }
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await arbRootRef.current?.requestFullscreen();
+      }
+    } catch {
+      setIsFullscreen((current) => !current);
+    }
+  }
+
   return (
-    <div className="arb-root -m-4 min-h-screen p-3 sm:-m-6 sm:p-5 lg:-m-8 lg:p-6">
+    <div ref={arbRootRef} className={`arb-root -m-4 min-h-screen p-3 sm:-m-6 sm:p-5 lg:-m-8 lg:p-6 ${isFullscreen ? "arb-fullscreen-mode" : ""}`}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 arb-scanlines" />
       </div>
@@ -82,7 +107,19 @@ export default function ArbEnginePage() {
 
         <header className="arb-console-head">
           <div className="arb-capital-core">
-            <div className="arb-label">capital</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="arb-label">live capital</div>
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="arb-ecosystem-button"
+                aria-label={isFullscreen ? "Exit fullscreen Arb ecosystem" : "Enter fullscreen Arb ecosystem"}
+                title={isFullscreen ? "Exit fullscreen" : "Fullscreen ecosystem"}
+              >
+                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                <span>{isFullscreen ? "EXIT" : "ECOSYSTEM"}</span>
+              </button>
+            </div>
             <div className={`arb-capital-number ${positive ? "text-[#00ff88]" : "text-[#ff4455]"}`}>
               ${capitalDisplay(bot.state.capital)}
             </div>
@@ -100,17 +137,17 @@ export default function ArbEnginePage() {
                 <Terminal className="h-4 w-4" />
                 OGFX / CRYPTO ARBITRAGE
               </span>
-              <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-2 py-1 text-[10px] tracking-[0.18em]">
+              <span className="rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1 text-[10px] tracking-[0.18em] text-[#8aebff]">
                 OPERATIONAL
               </span>
             </div>
-            <h1 className="mt-2 font-mono text-4xl font-black tracking-tight text-[#e0ffe8] sm:text-5xl">
+            <h1 className="arb-title mt-2 font-mono text-4xl font-black tracking-tight text-[#eafbff] sm:text-5xl">
               ARB ENGINE<span className="arb-cursor ml-2">|</span>
             </h1>
             <div className="mt-3 grid gap-2 font-mono text-xs text-[#7ab88a] sm:grid-cols-3">
               <div className="arb-mini-stat"><span>FEED</span><strong>{scanner.feed?.source === "coingecko" ? "COINGECKO LIVE" : "FALLBACK SIM"}</strong></div>
-              <div className="arb-mini-stat"><span>LOOP</span><strong>1.000s</strong></div>
-              <div className="arb-mini-stat"><span>STATUS</span><strong>SCANNING</strong></div>
+              <div className="arb-mini-stat"><span>LOOP</span><strong>0.650s</strong></div>
+              <div className="arb-mini-stat"><span>STATUS</span><strong>{bot.state.isRunning ? "AUTO-ROUTING" : "SCANNING"}</strong></div>
             </div>
           </div>
 
@@ -123,7 +160,7 @@ export default function ArbEnginePage() {
               <div><span className="text-[#2d5c3a]">Trades</span><strong className="block text-[#e0ffe8]">{bot.closedTrades.length}</strong></div>
               <div><span className="text-[#2d5c3a]">Win rate</span><strong className="block text-[#00ff88]">{bot.stats.winRate.toFixed(0)}%</strong></div>
               <div><span className="text-[#2d5c3a]">Best</span><strong className="block text-[#00ff88]">${bot.stats.bestTrade.toFixed(4)}</strong></div>
-              <div><span className="text-[#2d5c3a]">Open</span><strong className="block text-[#ffaa00]">{bot.openTrades.length}</strong></div>
+              <div><span className="text-[#31586a]">Open</span><strong className="block text-[#ffb020]">{bot.openTrades.length}</strong></div>
             </div>
           </div>
         </header>

@@ -23,6 +23,9 @@ export function BotControlPanel({
   onStart: () => void;
   onStop: () => void;
 }) {
+  const safeMaxOpenTrades = Math.min(12, Math.max(1, Number(config.maxOpenTrades) || 8));
+  const safeMinSpread = Math.min(5, Math.max(0.05, Number(config.minSpreadPct) || 0.12));
+
   function patch(next: Partial<BotConfig>) {
     setConfig({ ...config, ...next });
   }
@@ -46,8 +49,8 @@ export function BotControlPanel({
           className={[
             "grid h-14 w-14 place-items-center rounded border font-mono transition",
             running
-              ? "arb-pulse border-[#00ff88]/60 bg-[#00ff88]/20 text-[#00ff88]"
-              : "border-[#004d26] bg-black/30 text-[#7ab88a] hover:border-[#00ff88]/40 hover:text-[#00ff88]",
+              ? "arb-pulse border-[#22d3ee]/70 bg-[#22d3ee]/20 text-[#22d3ee]"
+              : "border-[#164e63] bg-black/30 text-[#83afc2] hover:border-[#22d3ee]/50 hover:text-[#22d3ee]",
           ].join(" ")}
           aria-label={running ? "Stop bot" : "Start bot"}
         >
@@ -55,8 +58,8 @@ export function BotControlPanel({
         </button>
       </div>
 
-      <div className="mt-4 rounded border border-[#004d26] bg-black/25 p-3 font-mono text-xs text-[#7ab88a]">
-        {running ? <span className="text-[#00ff88]">BOT ACTIVE * SCANNING...</span> : "BOT IDLE | READY"}
+      <div className="mt-4 rounded border border-[#164e63] bg-black/25 p-3 font-mono text-xs text-[#83afc2]">
+        {running ? <span className="text-[#22d3ee]">BOT ACTIVE * AUTO-ROUTING...</span> : "BOT IDLE | POWER TO AUTO-RUN"}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <span>Trades {tradesToday}</span>
           <span>Win {winRate.toFixed(0)}%</span>
@@ -71,11 +74,11 @@ export function BotControlPanel({
         </label>
         <label className="arb-field">
           Min spread %
-          <input type="number" min={0.05} step={0.01} value={config.minSpreadPct} onChange={(event) => patch({ minSpreadPct: Number(event.target.value) })} />
+          <input type="number" min={0.05} step={0.01} value={safeMinSpread} onChange={(event) => patch({ minSpreadPct: Math.min(5, Math.max(0.05, Number(event.target.value) || 0.12)) })} />
         </label>
         <label className="arb-field">
           Max simultaneous trades
-          <input type="number" min={1} max={10} value={config.maxOpenTrades} onChange={(event) => patch({ maxOpenTrades: Number(event.target.value) })} />
+          <input type="number" min={1} max={12} value={safeMaxOpenTrades} onChange={(event) => patch({ maxOpenTrades: Math.min(12, Math.max(1, Number(event.target.value) || 8)) })} />
         </label>
         <div>
           <div className="arb-label mb-2">Risk mode</div>

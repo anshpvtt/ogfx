@@ -32,12 +32,12 @@ export function ArbOpportunityCard({
     <article className="arb-op-row">
       <button type="button" onClick={() => onInspect(opportunity.coinId)} className="min-w-0 text-left">
         <div className="flex items-center gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[#00ff88]/30 bg-[#00ff88]/10 font-mono text-[11px] font-black text-[#00ff88] shadow-[0_0_18px_rgba(0,255,136,0.16)]">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[#22d3ee]/35 bg-[#22d3ee]/10 font-mono text-[11px] font-black text-[#8aebff] shadow-[0_0_18px_rgba(34,211,238,0.16)]">
             {opportunity.coin}
           </span>
           <span className="min-w-0">
-            <span className="block truncate font-mono text-sm font-black text-[#e0ffe8]">{opportunity.coin}/USDT</span>
-            <span className="block truncate font-mono text-[11px] text-[#7ab88a]">
+            <span className="block truncate font-mono text-sm font-black text-[#eafbff]">{opportunity.coin}/USDT</span>
+            <span className="block truncate font-mono text-[11px] text-[#83afc2]">
               {money(opportunity.buyPrice)} {"->"} {money(opportunity.sellPrice)}
             </span>
           </span>
@@ -57,21 +57,21 @@ export function ArbOpportunityCard({
       <div>
         <div className="arb-mobile-label">Confidence</div>
         <div className="flex items-center gap-2">
-          <span className="font-mono text-xs font-black text-[#e0ffe8]">{opportunity.confidence}%</span>
-          <span className="h-2 min-w-20 flex-1 overflow-hidden rounded-full bg-[#003d20]">
-            <span className="block h-full rounded-full bg-[#00ff88] shadow-[0_0_14px_rgba(0,255,136,0.55)]" style={{ width: `${opportunity.confidence}%` }} />
+          <span className="font-mono text-xs font-black text-[#eafbff]">{opportunity.confidence}%</span>
+          <span className="h-2 min-w-20 flex-1 overflow-hidden rounded-full bg-[#0b1b2e]">
+            <span className="block h-full rounded-full bg-[#22d3ee] shadow-[0_0_14px_rgba(34,211,238,0.55)]" style={{ width: `${opportunity.confidence}%` }} />
           </span>
         </div>
       </div>
 
-      <div className="inline-flex items-center gap-1 font-mono text-sm text-[#e0ffe8]">
-        <Timer className="h-3.5 w-3.5 text-[#ffaa00]" />
+      <div className="inline-flex items-center gap-1 font-mono text-sm text-[#eafbff]">
+        <Timer className="h-3.5 w-3.5 text-[#ffb020]" />
         ~{seconds}s
       </div>
 
       <div className="flex items-center gap-1.5">
         <span className="arb-exchange-chip">{exchangeCode(opportunity.buyExchange)}</span>
-        <span className="text-[#2d5c3a]">{"->"}</span>
+        <span className="text-[#31586a]">{"->"}</span>
         <span className="arb-exchange-chip">{exchangeCode(opportunity.sellExchange)}</span>
       </div>
 

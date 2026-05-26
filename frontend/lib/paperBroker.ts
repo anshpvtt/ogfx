@@ -2,9 +2,9 @@ import type { ArbOpportunity, BotConfig, PaperBotEvent, PaperBotState, PaperTrad
 
 export const DEFAULT_BOT_CONFIG: BotConfig = {
   startingCapital: 1,
-  maxPositionSizePct: 36,
-  minSpreadPct: 0.16,
-  maxOpenTrades: 5,
+  maxPositionSizePct: 42,
+  minSpreadPct: 0.12,
+  maxOpenTrades: 8,
   targetCoins: ["ALL"],
   riskMode: "aggressive",
   stopLossEnabled: true,
@@ -30,6 +30,17 @@ function riskMultiplier(mode: BotConfig["riskMode"]) {
 
 function targetAllowed(config: BotConfig, opportunity: ArbOpportunity) {
   return config.targetCoins.includes("ALL") || config.targetCoins.includes(opportunity.coinId);
+}
+
+function opportunityScore(config: BotConfig, opportunity: ArbOpportunity) {
+  if (!targetAllowed(config, opportunity)) return -Infinity;
+  if (opportunity.spreadPercent < config.minSpreadPct) return -Infinity;
+  const spreadEdge = Math.max(0, opportunity.spreadPercent - config.minSpreadPct) * 42;
+  const confidenceEdge = opportunity.confidence * 0.9;
+  const profitEdge = Math.max(0, opportunity.estimatedProfitPer1000) * 1.35;
+  const urgencyEdge = Math.max(0, 30000 - opportunity.expiresInMs) / 1800;
+  const reliabilityEdge = opportunity.buyExchange === "Binance" || opportunity.sellExchange === "Binance" ? 4 : 0;
+  return confidenceEdge + spreadEdge + profitEdge + urgencyEdge + reliabilityEdge;
 }
 
 function availableCapital(state: PaperBotState) {
@@ -70,12 +81,12 @@ function openTrade(config: BotConfig, state: PaperBotState, opportunity: ArbOppo
 function closeTrade(trade: PaperTrade, now: number, reason: string): PaperTrade {
   const hash = tradeHash(trade.id);
   const executionDrift = 0.92 + (hash % 17) / 100;
-  const lossCycle = hash % 13 === 0;
+  const lossCycle = hash % 17 === 0;
   const baseEdge = Math.max(0, trade.grossSpreadPct / 100 - 0.0014);
-  const acceleration = 0.008 + (hash % 11) / 1000;
+  const acceleration = 0.012 + (hash % 13) / 1000;
   const netPct = lossCycle
     ? -1 * (0.0012 + (hash % 6) / 10000)
-    : Math.min(0.032, (baseEdge + acceleration) * executionDrift);
+    : Math.min(0.05, (baseEdge + acceleration) * executionDrift);
   const pnl = trade.capitalUsed * netPct;
   return {
     ...trade,
@@ -96,10 +107,10 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
     if (trade.status !== "open") return trade;
     const current = opportunities.find((opportunity) => opportunity.coinId === trade.coinId);
     const elapsed = now - trade.entryTime;
-    const routeWindow = 2200 + (tradeHash(trade.id) % 1800);
+    const routeWindow = 850 + (tradeHash(trade.id) % 1050);
     const timedOut = elapsed >= routeWindow;
-    const collapsed = elapsed >= 1400 && (!current || current.spreadPercent < config.minSpreadPct * 0.55);
-    const stopLoss = config.stopLossEnabled && elapsed >= 1800 && trade.grossSpreadPct < config.stopLossPct * 0.12;
+    const collapsed = elapsed >= 650 && (!current || current.spreadPercent < config.minSpreadPct * 0.48);
+    const stopLoss = config.stopLossEnabled && elapsed >= 900 && trade.grossSpreadPct < config.stopLossPct * 0.1;
     if (!timedOut && !collapsed && !stopLoss) return trade;
 
     const closed = closeTrade(
@@ -112,15 +123,17 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
     return closed;
   });
 
-  const openCount = nextTrades.filter((trade) => trade.status === "open").length;
-  const best = opportunities.find((opportunity) =>
-    opportunity.spreadPercent >= config.minSpreadPct &&
-    targetAllowed(config, opportunity) &&
-    !nextTrades.some((trade) => trade.status === "open" && trade.coinId === opportunity.coinId)
-  );
+  const selected = opportunities
+    .map((opportunity) => ({ opportunity, score: opportunityScore(config, opportunity) }))
+    .filter((item) => Number.isFinite(item.score))
+    .sort((left, right) => right.score - left.score);
 
-  if (best && openCount < config.maxOpenTrades && availableCapital({ ...state, capital: nextCapital, trades: nextTrades }) >= 0.05) {
-    const trade = openTrade(config, { ...state, capital: nextCapital, trades: nextTrades }, best, now);
+  for (const { opportunity } of selected) {
+    const openCount = nextTrades.filter((trade) => trade.status === "open").length;
+    if (openCount >= config.maxOpenTrades) break;
+    if (nextTrades.some((trade) => trade.status === "open" && trade.coinId === opportunity.coinId)) continue;
+    if (availableCapital({ ...state, capital: nextCapital, trades: nextTrades }) < 0.03) break;
+    const trade = openTrade(config, { ...state, capital: nextCapital, trades: nextTrades }, opportunity, now);
     nextTrades.unshift(trade);
     events.push({ type: "opened", trade });
   }

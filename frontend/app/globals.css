@@ -1764,35 +1764,58 @@ td.neg { color: var(--sell); }
 }
 
 .arb-root {
-  --arb-bg-primary: #020c07;
-  --arb-bg-secondary: #071a0e;
-  --arb-bg-tertiary: #0d2b18;
+  --arb-bg-primary: #020617;
+  --arb-bg-secondary: #07111e;
+  --arb-bg-tertiary: #0b1b2e;
+  --arb-cyan: #22d3ee;
+  --arb-cyan-soft: #8aebff;
+  --arb-violet: #a78bfa;
   --arb-green-bright: #00ff88;
   --arb-green-mid: #00cc66;
-  --arb-green-dim: #004d26;
-  --arb-amber: #ffaa00;
-  --arb-red: #ff4455;
-  --arb-text-primary: #e0ffe8;
-  --arb-text-secondary: #7ab88a;
-  --arb-text-dim: #2d5c3a;
-  --arb-glow: 0 0 12px rgba(0, 255, 136, 0.3);
+  --arb-green-dim: #0f5132;
+  --arb-amber: #ffb020;
+  --arb-red: #ff3b5c;
+  --arb-text-primary: #eafbff;
+  --arb-text-secondary: #83afc2;
+  --arb-text-dim: #31586a;
+  --arb-glow: 0 0 12px rgba(34, 211, 238, 0.3);
   min-height: 100vh;
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 18% 0%, rgba(0, 255, 136, 0.12), transparent 32%),
-    radial-gradient(circle at 80% 18%, rgba(255, 170, 0, 0.08), transparent 30%),
-    linear-gradient(135deg, #020c07 0%, #041009 45%, #010503 100%);
+    radial-gradient(circle at 12% 0%, rgba(34, 211, 238, 0.18), transparent 34%),
+    radial-gradient(circle at 86% 8%, rgba(167, 139, 250, 0.16), transparent 30%),
+    radial-gradient(circle at 50% 100%, rgba(0, 255, 136, 0.08), transparent 36%),
+    linear-gradient(135deg, #020617 0%, #07111e 48%, #030712 100%);
   color: var(--arb-text-primary);
   font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+}
+
+.arb-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 20%, black, transparent 78%);
+}
+
+.arb-fullscreen-mode {
+  margin: 0 !important;
+  padding: 18px !important;
+  min-height: 100vh;
+  overflow: auto;
 }
 
 .arb-scanlines {
   background:
     repeating-linear-gradient(
       to bottom,
-      rgba(0, 255, 136, 0.05) 0,
-      rgba(0, 255, 136, 0.05) 1px,
+      rgba(34, 211, 238, 0.045) 0,
+      rgba(34, 211, 238, 0.045) 1px,
       transparent 1px,
       transparent 6px
     );
@@ -1801,16 +1824,17 @@ td.neg { color: var(--sell); }
 }
 
 .arb-panel {
-  border: 1px solid rgba(0, 255, 136, 0.15);
+  border: 1px solid rgba(34, 211, 238, 0.16);
   background:
-    linear-gradient(180deg, rgba(7, 26, 14, 0.92), rgba(2, 12, 7, 0.86)),
-    radial-gradient(circle at top left, rgba(0, 255, 136, 0.08), transparent 34%);
-  box-shadow: 0 0 12px rgba(0, 255, 136, 0.12), inset 0 1px 0 rgba(224, 255, 232, 0.04);
+    linear-gradient(180deg, rgba(7, 17, 30, 0.94), rgba(2, 6, 23, 0.9)),
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.1), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(167, 139, 250, 0.08), transparent 38%);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.1), inset 0 1px 0 rgba(234, 251, 255, 0.05);
 }
 
 .arb-console-head {
   display: grid;
-  grid-template-columns: minmax(190px, 250px) minmax(0, 1fr) minmax(210px, 270px);
+  grid-template-columns: minmax(240px, 320px) minmax(360px, 1fr) minmax(210px, 270px);
   gap: 14px;
   align-items: stretch;
 }
@@ -1823,26 +1847,62 @@ td.neg { color: var(--sell); }
 .arb-event-hero,
 .arb-event-row,
 .arb-footer-line {
-  border: 1px solid rgba(0, 255, 136, 0.15);
+  border: 1px solid rgba(34, 211, 238, 0.16);
   background:
-    linear-gradient(180deg, rgba(7, 26, 14, 0.94), rgba(2, 12, 7, 0.9)),
-    radial-gradient(circle at top left, rgba(0, 255, 136, 0.08), transparent 34%);
-  box-shadow: inset 0 1px 0 rgba(224, 255, 232, 0.04);
+    linear-gradient(180deg, rgba(7, 17, 30, 0.94), rgba(2, 6, 23, 0.91)),
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.08), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(167, 139, 250, 0.07), transparent 36%);
+  box-shadow: inset 0 1px 0 rgba(234, 251, 255, 0.05);
 }
 
 .arb-capital-core {
   padding: 18px;
-  box-shadow: 0 0 26px rgba(0, 255, 136, 0.15), inset 0 1px 0 rgba(224, 255, 232, 0.06);
+  min-width: 0;
+  box-shadow: 0 0 26px rgba(34, 211, 238, 0.16), inset 0 1px 0 rgba(234, 251, 255, 0.06);
 }
 
 .arb-capital-number {
   margin-top: 8px;
   font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
-  font-size: clamp(2.2rem, 4vw, 3.9rem);
+  font-size: clamp(2.25rem, 3.15vw, 3.35rem);
   font-weight: 950;
-  line-height: 0.92;
-  text-shadow: 0 0 18px rgba(0, 255, 136, 0.55);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px rgba(0, 255, 136, 0.5), 0 0 30px rgba(34, 211, 238, 0.26);
   animation: arb-capital-pop 900ms ease-in-out infinite alternate;
+}
+
+.arb-title {
+  text-shadow: 0 0 22px rgba(34, 211, 238, 0.22);
+}
+
+.arb-ecosystem-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 6px;
+  background: rgba(34, 211, 238, 0.08);
+  padding: 0 10px;
+  color: #8aebff;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.arb-ecosystem-button:hover {
+  border-color: rgba(34, 211, 238, 0.68);
+  background: rgba(34, 211, 238, 0.15);
+  transform: translateY(-1px);
 }
 
 .arb-system-card {
@@ -1856,13 +1916,13 @@ td.neg { color: var(--sell); }
 .arb-mini-stat span,
 .arb-stat-card span {
   display: block;
-  color: #2d5c3a;
+  color: #31586a;
 }
 
 .arb-mini-stat strong,
 .arb-stat-card strong {
   display: block;
-  color: #00ff88;
+  color: #22d3ee;
   font-weight: 900;
 }
 
@@ -1880,7 +1940,7 @@ td.neg { color: var(--sell); }
 
 .arb-stat-card svg {
   grid-row: span 2;
-  color: #00ff88;
+  color: #22d3ee;
 }
 
 .arb-stat-card strong {
@@ -1895,15 +1955,15 @@ td.neg { color: var(--sell); }
   gap: 5px;
   height: 54px;
   overflow: hidden;
-  border-top: 1px solid rgba(0, 255, 136, 0.12);
+  border-top: 1px solid rgba(34, 211, 238, 0.13);
 }
 
 .arb-sparkline i {
   display: block;
   width: 6px;
   min-height: 8px;
-  background: linear-gradient(180deg, #00ff88, rgba(0, 255, 136, 0.05));
-  box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+  background: linear-gradient(180deg, #22d3ee, rgba(0, 255, 136, 0.08));
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.25);
   animation: arb-bars 1.8s ease-in-out infinite alternate;
 }
 
@@ -1917,10 +1977,10 @@ td.neg { color: var(--sell); }
 }
 
 .arb-op-row:hover {
-  border-color: rgba(0, 255, 136, 0.36);
+  border-color: rgba(34, 211, 238, 0.42);
   background:
-    linear-gradient(180deg, rgba(10, 38, 20, 0.96), rgba(2, 12, 7, 0.92)),
-    radial-gradient(circle at 10% 0%, rgba(0, 255, 136, 0.13), transparent 42%);
+    linear-gradient(180deg, rgba(11, 27, 46, 0.96), rgba(2, 6, 23, 0.92)),
+    radial-gradient(circle at 10% 0%, rgba(34, 211, 238, 0.15), transparent 42%);
   transform: translateY(-1px);
 }
 
@@ -1931,7 +1991,7 @@ td.neg { color: var(--sell); }
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #2d5c3a;
+  color: #31586a;
 }
 
 .arb-exchange-chip {
@@ -1939,9 +1999,9 @@ td.neg { color: var(--sell); }
   min-width: 28px;
   height: 24px;
   place-items: center;
-  border: 1px solid rgba(0, 255, 136, 0.25);
-  background: rgba(0, 255, 136, 0.08);
-  color: #e0ffe8;
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  background: rgba(34, 211, 238, 0.08);
+  color: #eafbff;
   font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
   font-size: 10px;
   font-weight: 900;
@@ -2015,7 +2075,7 @@ td.neg { color: var(--sell); }
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.22em;
-  color: #2d5c3a;
+  color: #31586a;
   text-transform: uppercase;
 }
 
@@ -2026,17 +2086,17 @@ td.neg { color: var(--sell); }
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
-  color: #7ab88a;
+  color: #83afc2;
   text-transform: uppercase;
 }
 
 .arb-field input,
 .arb-field select {
   height: 42px;
-  border: 1px solid rgba(0, 255, 136, 0.18);
+  border: 1px solid rgba(34, 211, 238, 0.18);
   background: rgba(0, 0, 0, 0.28);
   padding: 0 12px;
-  color: #e0ffe8;
+  color: #eafbff;
   outline: none;
   font-size: 13px;
   letter-spacing: 0;
@@ -2044,8 +2104,8 @@ td.neg { color: var(--sell); }
 
 .arb-field input:focus,
 .arb-field select:focus {
-  border-color: rgba(0, 255, 136, 0.55);
-  box-shadow: 0 0 12px rgba(0, 255, 136, 0.18);
+  border-color: rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.18);
 }
 
 .arb-live {
@@ -2059,7 +2119,7 @@ td.neg { color: var(--sell); }
 }
 
 .arb-pulse {
-  animation: arb-pulse 1.6s ease-in-out infinite;
+  animation: arb-pulse 1.05s ease-in-out infinite;
 }
 
 .arb-marquee {
@@ -2082,8 +2142,8 @@ td.neg { color: var(--sell); }
 }
 
 @keyframes arb-pulse {
-  0%, 100% { box-shadow: 0 0 12px rgba(0, 255, 136, 0.22); }
-  50% { box-shadow: 0 0 28px rgba(0, 255, 136, 0.48); }
+  0%, 100% { box-shadow: 0 0 12px rgba(34, 211, 238, 0.22); }
+  50% { box-shadow: 0 0 30px rgba(34, 211, 238, 0.56), 0 0 42px rgba(0, 255, 136, 0.22); }
 }
 
 @keyframes arb-capital-pop {
@@ -2134,14 +2194,64 @@ td.neg { color: var(--sell); }
   }
 }
 
+@media (max-width: 1536px) and (min-width: 1281px) {
+  .arb-console-head {
+    grid-template-columns: minmax(230px, 290px) minmax(300px, 1fr) minmax(200px, 250px);
+  }
+
+  .arb-capital-number {
+    font-size: clamp(2rem, 2.65vw, 2.95rem);
+  }
+}
+
 @media (max-width: 640px) {
+  .arb-root {
+    padding: 10px !important;
+  }
+
   .arb-capital-core,
   .arb-system-card {
-    padding: 14px;
+    padding: 12px;
+  }
+
+  .arb-capital-core {
+    position: sticky;
+    top: 8px;
+    z-index: 30;
+  }
+
+  .arb-capital-number {
+    font-size: clamp(2.05rem, 12vw, 3.05rem);
+  }
+
+  .arb-title {
+    font-size: clamp(2rem, 12vw, 3rem);
+    line-height: 1;
+  }
+
+  .arb-ecosystem-button span {
+    display: none;
+  }
+
+  .arb-ecosystem-button {
+    width: 36px;
+    padding: 0;
   }
 
   .arb-op-row {
     grid-template-columns: 1fr;
+  }
+
+  .arb-stat-card {
+    min-height: 64px;
+  }
+
+  .arb-stat-card strong {
+    font-size: 19px;
+  }
+
+  .arb-marquee {
+    animation-duration: 22s;
   }
 
   .arb-footer-line {

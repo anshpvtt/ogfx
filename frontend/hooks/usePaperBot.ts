@@ -73,8 +73,8 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
     const sanitized = {
       ...nextConfig,
       startingCapital: Math.min(10000, Math.max(1, Number(nextConfig.startingCapital) || 1)),
-      maxOpenTrades: Math.min(10, Math.max(1, Number(nextConfig.maxOpenTrades) || 5)),
-      minSpreadPct: Math.min(5, Math.max(0.05, Number(nextConfig.minSpreadPct) || 0.16)),
+      maxOpenTrades: Math.min(12, Math.max(1, Number(nextConfig.maxOpenTrades) || 8)),
+      minSpreadPct: Math.min(5, Math.max(0.05, Number(nextConfig.minSpreadPct) || 0.12)),
     };
     setConfig(sanitized);
     setState((current) => ({
@@ -87,7 +87,15 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
     }));
     setRecentEvents([]);
     postJson("/api/arb/bot/start", { config: sanitized });
-  }, [config]);
+    window.setTimeout(() => {
+      setState((current) => {
+        if (!current.isRunning) return current;
+        const { state: next, events } = botTick(sanitized, current, opportunities, Date.now());
+        publishEvents(events);
+        return next;
+      });
+    }, 120);
+  }, [config, opportunities, publishEvents]);
 
   const stop = useCallback(() => {
     setState((current) => ({ ...current, isRunning: false }));
@@ -111,7 +119,7 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
         publishEvents(events);
         return next;
       });
-    }, 1000);
+    }, 650);
     return () => window.clearInterval(interval);
   }, [config, opportunities, publishEvents, state.isRunning]);
 
