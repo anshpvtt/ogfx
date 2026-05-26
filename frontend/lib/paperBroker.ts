@@ -138,10 +138,9 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
     events.push({ type: "opened", trade });
   }
 
-  const closedThisTick = events.some((event) => event.type === "closed");
-  const shouldSnapshot = closedThisTick || !state.snapshots.length || now - state.snapshots[state.snapshots.length - 1].time >= 5000;
+  const shouldSnapshot = !state.snapshots.length || now - state.snapshots[state.snapshots.length - 1].time >= 10000;
   const snapshots = shouldSnapshot
-    ? [...state.snapshots, { time: now, capital: nextCapital }].slice(-180)
+    ? [...state.snapshots, { time: now, capital: nextCapital }].slice(-120)
     : state.snapshots;
   if (shouldSnapshot) events.push({ type: "snapshot", capital: nextCapital, time: now });
 
@@ -149,7 +148,7 @@ export function botTick(config: BotConfig, state: PaperBotState, opportunities: 
     state: {
       ...state,
       capital: nextCapital,
-      trades: nextTrades.slice(0, 250),
+      trades: nextTrades.slice(0, 80),
       snapshots,
       lastTickAt: now,
     },

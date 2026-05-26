@@ -41,6 +41,9 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
   const clickAudioRef = useRef<HTMLAudioElement | null>(null);
   const syncQueueRef = useRef<PaperBotEvent[]>([]);
   const syncTimerRef = useRef<number | null>(null);
+  const closedEventsSeenRef = useRef(0);
+  const lastClosedSyncAtRef = useRef(0);
+  const lastSnapshotSyncAtRef = useRef(0);
 
   useEffect(() => {
     clickAudioRef.current = new Audio("/sounds/arb-click.mp3");
@@ -59,25 +62,39 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
   }, []);
 
   const scheduleSync = useCallback((events: PaperBotEvent[]) => {
-    const syncable = events.filter((event) => event.type === "closed" || event.type === "snapshot");
+    const now = Date.now();
+    const syncable: PaperBotEvent[] = [];
+    for (const event of events) {
+      if (event.type === "closed") {
+        closedEventsSeenRef.current += 1;
+        if (closedEventsSeenRef.current % 12 === 0 || now - lastClosedSyncAtRef.current >= 45000) {
+          lastClosedSyncAtRef.current = now;
+          syncable.push(event);
+        }
+      }
+      if (event.type === "snapshot" && event.time - lastSnapshotSyncAtRef.current >= 60000) {
+        lastSnapshotSyncAtRef.current = event.time;
+        syncable.push(event);
+      }
+    }
     if (!syncable.length) return;
     syncQueueRef.current.push(...syncable);
     if (syncTimerRef.current != null) return;
     syncTimerRef.current = window.setTimeout(() => {
-      const batch = syncQueueRef.current.splice(0, 500);
+      const batch = syncQueueRef.current.splice(0, 25);
       syncTimerRef.current = null;
       for (const event of batch) {
         if (event.type === "closed") postJson("/api/arb/trade/close", { trade: event.trade });
         if (event.type === "snapshot") postJson("/api/arb/capital", { capital: event.capital, snapshotAt: event.time });
       }
-    }, 1200);
+    }, 2500);
   }, []);
 
   const publishEvents = useCallback((events: PaperBotEvent[]) => {
     const tape = events.map(tapeFromEvent).filter(Boolean) as ExecutionTapeEvent[];
     if (tape.length) {
       tape.forEach((event, index) => window.setTimeout(() => playTradeClick(event.tone), index * 120));
-      setRecentEvents((current) => [...tape, ...current].slice(0, 8));
+      setRecentEvents((current) => [...tape, ...current].slice(0, 6));
     }
     scheduleSync(events);
   }, [playTradeClick, scheduleSync]);
@@ -137,7 +154,7 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
         ...current,
         capital,
         startingCapital: Number((current.startingCapital + cleanAmount).toFixed(6)),
-        snapshots: [...current.snapshots, { time: now, capital }].slice(-180),
+        snapshots: [...current.snapshots, { time: now, capital }].slice(-120),
       };
     });
     postJson("/api/arb/capital", { capital: nextCapital, snapshotAt: now });
@@ -173,7 +190,7 @@ export function usePaperBot(opportunities: ArbOpportunity[]) {
       if (current.trades.length) return current;
       return {
         ...current,
-        trades: trades.slice(0, 150),
+        trades: trades.slice(0, 40),
       };
     });
   }, []);

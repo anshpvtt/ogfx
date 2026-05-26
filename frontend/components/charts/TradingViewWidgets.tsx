@@ -82,7 +82,13 @@ export function TradingViewAdvancedChart({
         locale: "en",
         allow_symbol_change: true,
         hide_side_toolbar: false,
+        hide_top_toolbar: false,
         save_image: true,
+        enabled_features: [
+          "left_toolbar",
+          "header_fullscreen_button",
+          "header_screenshot",
+        ],
         withdateranges: false,
         details: false,
         hotlist: false,

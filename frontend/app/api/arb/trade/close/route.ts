@@ -40,14 +40,6 @@ export async function POST(request: NextRequest) {
     .select("*")
     .single();
 
-  if (!error && Number.isFinite(Number(trade.pnl))) {
-    await supabase.from("arb_capital_snapshots").insert({
-      user_id: user.id,
-      capital: Number(body?.capital ?? 0) || Number(trade.capitalAfter ?? 0) || Math.max(0, Number(trade.capitalUsed || 0) + Number(trade.pnl || 0)),
-      snapshot_at: new Date().toISOString(),
-    }).then(() => null);
-  }
-
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ trade: data });
 }

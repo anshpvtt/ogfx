@@ -35,7 +35,7 @@ export async function GET() {
       .select("*")
       .eq("user_id", user.id)
       .order("opened_at", { ascending: false })
-      .limit(150);
+      .limit(60);
 
     if (error) throw new Error(error.message);
 

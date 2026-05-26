@@ -7,25 +7,14 @@ import {
   Bot,
   CheckCircle2,
   CircleDollarSign,
-  Clock3,
-  Crosshair,
-  History,
-  Layers3,
   Loader2,
-  Lock,
   Maximize2,
   Minus,
-  MousePointer2,
-  PanelRight,
   Play,
   Plus,
   RefreshCw,
-  Settings2,
-  ShieldCheck,
-  Target,
   Wallet,
   X,
-  Zap,
 } from "lucide-react";
 import { LIVE_CHART_TIMEFRAMES, TRADING_ASSETS } from "@/lib/assets";
 import { Button } from "@/components/ui/button";
@@ -45,11 +34,6 @@ import { cn } from "@/lib/utils";
 const TradingViewAdvancedChart = dynamic(
   () => import("@/components/charts/TradingViewWidgets").then((mod) => mod.TradingViewAdvancedChart),
   { ssr: false }
-);
-
-const LiveSmcChart = dynamic(
-  () => import("@/components/charts/LiveSmcChart").then((mod) => mod.LiveSmcChart),
-  { ssr: false, loading: () => <div className="h-full min-h-[140px] animate-pulse rounded-xl bg-white/[0.03]" /> }
 );
 
 type MarketSnapshot = {
@@ -295,10 +279,9 @@ export default function DashboardChartsPage() {
   const [agentWarning, setAgentWarning] = useState("");
   const [agentDecision, setAgentDecision] = useState<AgentDecision | null>(null);
   const [agentImage, setAgentImage] = useState<string>("");
-  const [nativeChartImage, setNativeChartImage] = useState<string>("");
-  const [nativeCaptureEnabled, setNativeCaptureEnabled] = useState(false);
   const [notice, setNotice] = useState("");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [capitalInput, setCapitalInput] = useState("10000");
   const [orderMode, setOrderMode] = useState<"market" | "pending">("market");
   const [selectedOrderId, setSelectedOrderId] = useState("");
@@ -431,22 +414,7 @@ export default function DashboardChartsPage() {
     };
   }, [account, openOrders, settings?.leverage]);
   const displayAccount = liveAccount ?? account;
-  const statusCards = [
-    { label: "Live provider", value: "TradingView", detail: "clean chart default", icon: ShieldCheck },
-    {
-      label: "Market sync",
-      value: snapshotsLoading ? "Refreshing" : "Ready",
-      detail: "Yahoo snapshots for TP/SL",
-      icon: RefreshCw,
-    },
-    { label: "Demo storage", value: "Supabase", detail: "capital, orders, history", icon: Wallet },
-    {
-      label: "Crons",
-      value: settings?.auto_trading_enabled ? "Auto enabled" : "Manual only",
-      detail: "guarded by CRON_SECRET",
-      icon: Bot,
-    },
-  ];
+  const chartHeight = isChartFullscreen && typeof window !== "undefined" ? window.innerHeight : isCompactViewport ? 520 : 620;
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -468,16 +436,11 @@ export default function DashboardChartsPage() {
   }, [chartLevelMin, chartLevelMax]);
 
   useEffect(() => {
-    if (window.matchMedia("(max-width: 900px)").matches) return;
-    const enable = () => setNativeCaptureEnabled(true);
-    const requestIdle = window.requestIdleCallback;
-    const cancelIdle = window.cancelIdleCallback;
-    if (typeof requestIdle === "function" && typeof cancelIdle === "function") {
-      const id = requestIdle(enable, { timeout: 4000 });
-      return () => cancelIdle(id);
-    }
-    const id = globalThis.setTimeout(enable, 1800);
-    return () => globalThis.clearTimeout(id);
+    const media = window.matchMedia("(max-width: 768px)");
+    const sync = () => setIsCompactViewport(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
   }, []);
 
   const priceFromPointer = useCallback((clientY: number) => {
@@ -659,7 +622,7 @@ export default function DashboardChartsPage() {
     loadDemoAccount();
     const handle = window.setInterval(() => {
       if (!document.hidden) loadDemoAccount();
-    }, 15000);
+    }, 60000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -667,16 +630,25 @@ export default function DashboardChartsPage() {
   useEffect(() => {
     if (!userId) return;
     const supabase = createSupabaseBrowserClient();
+    let syncTimer: number | null = null;
+    const scheduleSync = () => {
+      if (syncTimer != null) window.clearTimeout(syncTimer);
+      syncTimer = window.setTimeout(() => {
+        syncTimer = null;
+        if (!document.hidden) loadDemoAccount();
+      }, 900);
+    };
     const channel = supabase
       .channel(`demo-terminal-${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "demo_orders", filter: `user_id=eq.${userId}` }, () => {
-        loadDemoAccount();
+        scheduleSync();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "demo_accounts", filter: `user_id=eq.${userId}` }, () => {
-        loadDemoAccount();
+        scheduleSync();
       })
       .subscribe();
     return () => {
+      if (syncTimer != null) window.clearTimeout(syncTimer);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -727,7 +699,7 @@ export default function DashboardChartsPage() {
     setAgentWarning("");
 
     try {
-      const chartImage = agentImage || (nativeCaptureEnabled ? nativeChartImage : "");
+      const chartImage = agentImage;
       const response = await fetch("/api/ai/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -744,7 +716,7 @@ export default function DashboardChartsPage() {
           history: closedOrders.slice(0, 20),
           saveSignal: forceAi,
           strategyLogic: {
-            source: chartImage ? (agentImage ? "Attached chart image" : "Live chart capture") : "Structured live snapshot",
+            source: chartImage ? "Attached chart image" : "Structured live snapshot",
             rule: "Use ANFX LSBR plus Shakuni trap logic: liquidity sweep, BOS/MSS/CHOCH, displacement, retest into OB/FVG/supply/demand, HTF bias, no entry without numeric TP/SL, and respect account capital/open exposure.",
           },
         }),
@@ -1141,25 +1113,7 @@ export default function DashboardChartsPage() {
               </button>
             ))}
             <div className="mx-2 h-5 w-px bg-white/10" />
-            {[
-              { icon: MousePointer2, label: "Pointer" },
-              { icon: Crosshair, label: "Crosshair" },
-              { icon: Layers3, label: "Objects" },
-              { icon: PanelRight, label: "Panel" },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  className="grid h-8 w-8 place-items-center rounded text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
-                  title={item.label}
-                >
-                  <Icon className="h-4 w-4" />
-                </button>
-              );
-            })}
-            <span className="ml-2 whitespace-nowrap text-xs text-slate-500">Plain TradingView chart</span>
+            <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">TV Draw</span>
           </div>
 
           <div className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400">
@@ -1186,35 +1140,17 @@ export default function DashboardChartsPage() {
           </div>
         </div>
 
-        <div className="grid min-h-[690px] xl:grid-cols-[46px_minmax(0,1fr)_342px]">
-          <div className="hidden border-r border-[#243440] bg-[#101b24] py-2 xl:block">
-            {[
-              Crosshair,
-              Minus,
-              Target,
-              Settings2,
-              Lock,
-              Clock3,
-              Zap,
-              History,
-              X,
-            ].map((Icon, index) => (
-              <button
-                key={index}
-                type="button"
-                className="mx-auto mb-1 grid h-10 w-10 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-white"
-              >
-                <Icon className="h-4 w-4" />
-              </button>
-            ))}
-          </div>
-
-          <div ref={chartShellRef} className="relative min-h-[560px] bg-[#05080c] fullscreen:min-h-screen">
+        <div className="grid items-start xl:grid-cols-[minmax(0,1fr)_342px]">
+          <div
+            ref={chartShellRef}
+            className="relative min-h-0 bg-[#05080c] fullscreen:min-h-screen"
+            style={{ height: chartHeight }}
+          >
             <TradingViewAdvancedChart
               key={`${activeAsset.tradingViewSymbol}-${interval.value}-${refreshKey}`}
               symbol={activeAsset.tradingViewSymbol}
               interval={interval.value}
-              height={isChartFullscreen && typeof window !== "undefined" ? window.innerHeight : 690}
+              height={chartHeight}
               terminal
             />
             <div ref={levelOverlayRef} className={cn("pointer-events-none absolute inset-x-3 top-8 bottom-10", dragTarget && "cursor-ns-resize")}>
@@ -1403,26 +1339,12 @@ export default function DashboardChartsPage() {
                 </div>
               </div>
             ) : null}
-            <div className="absolute bottom-4 left-4 z-10 w-[min(360px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#05080c]/92 shadow-2xl backdrop-blur">
-              <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-slate-400">
-                <span>AI capture chart</span>
-                <span className="text-cyan-200">{nativeCaptureEnabled ? (nativeChartImage ? "ready" : "syncing") : "standby"}</span>
-              </div>
-              {nativeCaptureEnabled ? (
-                <LiveSmcChart
-                  candles={(activeSnapshot as any)?.candles ?? []}
-                  height={154}
-                  onSnapshot={setNativeChartImage}
-                />
-              ) : (
-                <div className="grid min-h-[140px] place-items-center px-4 text-center text-xs text-slate-500">
-                  Capture loads during idle on desktop. Mobile uses structured live data for speed.
-                </div>
-              )}
-            </div>
           </div>
 
-          <aside className="border-t border-[#243440] bg-[#0d171f] xl:border-l xl:border-t-0">
+          <aside
+            className="border-t border-[#243440] bg-[#0d171f] xl:border-l xl:border-t-0"
+            style={isCompactViewport ? undefined : { maxHeight: chartHeight, overflowY: "auto" }}
+          >
             <div className="border-b border-[#243440] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1862,18 +1784,6 @@ export default function DashboardChartsPage() {
         </div>
       </section>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        {statusCards.map(({ label, value, detail, icon: Icon }) => (
-          <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-500">
-              <Icon className="h-4 w-4 text-cyan-200" />
-              {label}
-            </div>
-            <div className="mt-2 text-lg font-black text-white">{value}</div>
-            <div className="mt-1 text-xs text-slate-500">{detail}</div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

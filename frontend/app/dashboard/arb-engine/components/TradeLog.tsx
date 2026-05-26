@@ -12,10 +12,10 @@ function money(value?: number) {
 }
 
 export function TradeLog({ trades }: { trades: PaperTrade[] }) {
-  const [tab, setTab] = useState<Tab>("all");
+  const [tab, setTab] = useState<Tab>("open");
   const filtered = useMemo(() => {
-    if (tab === "all") return trades;
-    return trades.filter((trade) => trade.status === tab);
+    const rows = tab === "all" ? trades : trades.filter((trade) => trade.status === tab);
+    return rows.slice(0, 40);
   }, [tab, trades]);
   const open = trades.filter((trade) => trade.status === "open").length;
   const closed = trades.filter((trade) => trade.status === "closed").length;
@@ -51,7 +51,7 @@ export function TradeLog({ trades }: { trades: PaperTrade[] }) {
           <h3 className="font-mono text-xl font-black text-[#e0ffe8]">REAL-TIME FILLS</h3>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-3 py-1 font-mono text-xs text-[#00ff88]">Supabase connected</span>
+          <span className="rounded border border-[#00ff88]/30 bg-[#00ff88]/10 px-3 py-1 font-mono text-xs text-[#00ff88]">Lite sync</span>
           <button type="button" onClick={exportCsv} className="inline-flex items-center gap-2 rounded border border-[#004d26] px-3 py-1.5 font-mono text-xs text-[#7ab88a] hover:text-[#00ff88]">
             <Download className="h-3.5 w-3.5" /> CSV
           </button>
@@ -75,7 +75,7 @@ export function TradeLog({ trades }: { trades: PaperTrade[] }) {
         ))}
       </div>
 
-      <div className="mt-4 max-h-[380px] overflow-auto">
+      <div className="mt-4 max-h-[240px] overflow-auto">
         <table className="w-full min-w-[920px] font-mono text-xs">
           <thead className="sticky top-0 bg-[#020c07] text-[#2d5c3a]">
             <tr>
